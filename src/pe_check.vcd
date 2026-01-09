@@ -1,0 +1,103 @@
+$date
+	Fri Jan  9 22:48:34 2026
+$end
+$version
+	Icarus Verilog
+$end
+$timescale
+	1ps
+$end
+$scope module pe_tb $end
+$var wire 32 ! out_psum [31:0] $end
+$var wire 8 " out_act [7:0] $end
+$var reg 1 # clk $end
+$var reg 1 $ en_compute $end
+$var reg 8 % in_act [7:0] $end
+$var reg 32 & in_psum [31:0] $end
+$var reg 8 ' in_weight [7:0] $end
+$var reg 1 ( load_weight $end
+$var reg 1 ) rst_n $end
+$scope module dut $end
+$var wire 1 # clk $end
+$var wire 1 $ en_compute $end
+$var wire 8 * in_act [7:0] $end
+$var wire 32 + in_psum [31:0] $end
+$var wire 8 , in_weight [7:0] $end
+$var wire 1 ( load_weight $end
+$var wire 1 ) rst_n $end
+$var reg 8 - out_act [7:0] $end
+$var reg 32 . out_psum [31:0] $end
+$var reg 8 / reg_weight [7:0] $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+$comment Show the parameter values. $end
+$dumpall
+$end
+#0
+$dumpvars
+b0 /
+b0 .
+b0 -
+b0 ,
+b0 +
+b0 *
+0)
+0(
+b0 '
+b0 &
+b0 %
+0$
+0#
+b0 "
+b0 !
+$end
+#5000
+1#
+#10000
+0#
+#15000
+1#
+#20000
+0#
+1)
+#25000
+1#
+#30000
+0#
+b101 '
+b101 ,
+1(
+#35000
+b101 /
+1#
+#40000
+0#
+b10100 &
+b10100 +
+b1010 %
+b1010 *
+1$
+b0 '
+b0 ,
+0(
+#45000
+b1000110 !
+b1000110 .
+b1010 "
+b1010 -
+1#
+#50000
+0#
+b1100100 &
+b1100100 +
+b11111101 %
+b11111101 *
+#55000
+b1010101 !
+b1010101 .
+b11111101 "
+b11111101 -
+1#
+#60000
+0#
