@@ -89,7 +89,7 @@ module global_controller (
                 // 这里为了简化，假设 Drain 需要固定周期 (例如行数 + 流水线深度)
                 // 暂时用固定值 10 个周期模拟 Output Drain
                 // 实际项目中需要根据 Output Buffer 的 Full/Empty 信号握手
-                if (cnt_k >= 10) 
+                if (cnt_k >= `ARRAY_ROW + 4) 
                      next_state = S_DONE;
             end
 

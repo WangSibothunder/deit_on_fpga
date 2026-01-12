@@ -20,7 +20,16 @@ echo "开始编译和仿真模块: $MODULE_NAME"
 
 # 编译Verilog文件
 echo "正在编译..."
-iverilog -o $SIM_OUT params.vh ${MODULE_NAME}.v $TB_FILE
+# 根据需要编译的模块添加依赖文件
+cd src
+if [ "$MODULE_NAME" == "systolic_array" ]; then
+    iverilog -o ../$SIM_OUT params.vh pe.v ${MODULE_NAME}.v $TB_FILE
+elif [ "$MODULE_NAME" == "pe" ]; then
+    iverilog -o ../$SIM_OUT params.vh ${MODULE_NAME}.v $TB_FILE
+else
+    iverilog -o ../$SIM_OUT params.vh ${MODULE_NAME}.v $TB_FILE
+fi
+cd ..
 if [ $? -ne 0 ]; then
     echo "编译失败！"
     exit 1

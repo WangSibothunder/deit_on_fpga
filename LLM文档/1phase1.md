@@ -18,11 +18,11 @@ Target: 16x16 Systolic Array (256 PEs).
 
 Zynq-7020 Resources: 220 DSP48E1 Slices.
 
-Constraint Violation: $256 > 220$。
+Constraint Violation: \(256 > 220\)。
 
 Architect's Note: 在 Zynq-7020 上实现物理上的 16x16 全 DSP 阵列是不可能的。
 
-Solution: 我们将架构设计为 Parameterizable (参数化) 的 $R \times C$ 阵列。
+Solution: 我们将架构设计为 Parameterizable (参数化) 的 \(R \times C\) 阵列。
 
 Recommendation: 推荐物理实现规模为 12x16 (192 DSPs) 或 14x14 (196 DSPs)。这能留下约 20-30 个 DSP 用于地址生成计算或其他逻辑，同时保持较高的利用率。
 
@@ -32,7 +32,7 @@ Recommendation: 推荐物理实现规模为 12x16 (192 DSPs) 或 14x14 (196 DSPs
 
 Model Size: DeiT-Tiny (INT8) $\approx 5 \text{MB}$ Weights.
 
-On-chip BRAM: 4.9 Mb $\approx 600 \text{KB}$。
+On-chip BRAM: 4.9 Mb \(\approx 600 \text{KB}\)。
 
 Conclusion: BRAM 无法存下整个模型。
 
@@ -58,47 +58,14 @@ Optimization: 必须利用 Data Reuse (数据复用)。K-Stationary (Output Stat
 
 2.1 Hardware / Software Partitioning
 
-Module
-
-Location
-
-Reason
-
-MatMul (GEMM)
-
-PL (FPGA)
-
-计算密集型，占据 Transformer 95% 以上算力。适合脉动阵列。
-
-Bias Add / Scaling
-
-PL (FPGA)
-
-流水线操作，紧跟 GEMM 输出处理。
-
-Quant/De-quant
-
-PL (FPGA)
-
-简单的移位和截断操作，硬件效率极高。
-
-Softmax
-
-PS (ARM)
-
-指数与除法在 FPGA 上消耗 LUT 巨大且精度难控，ARM 处理更灵活。
-
-GELU / LayerNorm
-
-PS (ARM)
-
-非线性强，且数据量相对较小（相对于 GEMM 的计算量），由 CPU 处理。
-
-Control Flow
-
-PS (Python)
-
-使用 PYNQ 控制层调度每一层的执行，简化 FPGA 状态机复杂度。
+|Module|Location|Reason|
+|------|--------|------|
+|MatMul (GEMM)|PL (FPGA)|计算密集型，占据 Transformer 95% 以上算力。适合脉动阵列。|
+|Bias Add / Scaling|PL (FPGA)|流水线操作，紧跟 GEMM 输出处理。|
+|Quant/De-quant|PL (FPGA)|简单的移位和截断操作，硬件效率极高。|
+|Softmax|PS (ARM)|指数与除法在 FPGA 上消耗 LUT 巨大且精度难控，ARM 处理更灵活。|
+|GELU / LayerNorm|PS (ARM)|非线性强，且数据量相对较小（相对于 GEMM 的计算量），由 CPU 处理。|
+|Control Flow|PS (Python)|使用 PYNQ 控制层调度每一层的执行，简化 FPGA 状态机复杂度。|
 
 2.2 Top-Level Block Diagram
 
@@ -140,7 +107,7 @@ PS (Python)
 
 3.1 Why Output Stationary (OS)?
 
-在 Transformer 中，矩阵乘法通常是 $A \times B$。
+在 Transformer 中，矩阵乘法通常是 \(A \times B\)。
 
 Weights (B): 从顶部流入。
 
@@ -162,6 +129,7 @@ Internal: accumulator (24-bit or 32-bit to prevent overflow during K-loop).
 
 Logic:
 
+```verilog
 always @(posedge clk) begin
     if (en) begin
         // DSP48E1 inferred MAC
@@ -171,23 +139,24 @@ always @(posedge clk) begin
         out_b <= in_b;
     end
 end
+```
 
 
 3.3 Data Mapping Strategy (DeiT Specific)
 
 Transformer 的 Attention 机制包含 $Q, K, V$ 投影。
 
-Matrix Dimensions: $(B, N, D)$.
+Matrix Dimensions: \((B, N, D)\). 
 
-Tiling: 我们不能一次算完。我们需要将大矩阵切分为 $12 \times 16$ 的小块 (Tiles)。
+Tiling: 我们不能一次算完。我们需要将大矩阵切分为 \(12 \times 16\) 的小块 (Tiles)。
 
 Schedule:
 
-PS 端将权重块 $W_{tile}$ 和输入块 $X_{tile}$ 搬运到 PL 的 BRAM。
+PS 端将权重块 \(W_{tile}\) 和输入块 \(X_{tile}\) 搬运到 PL 的 BRAM。
 
 PL 启动状态机，将数据推入阵列。
 
-阵列计算 $12 \times 16$ 的结果子块。
+阵列计算 \(12 \times 16\) 的结果子块。
 
 结果写回输出 Buffer，再通过 DMA 传回 PS。
 
@@ -207,7 +176,7 @@ Agile Iteration: 我们的重点是 FPGA 加速器的 RTL 设计，而不是嵌�
 
 为了进入 Phase 2: Module Specification，请你完成以下思考题，并在回复中确认：
 
-Bit Width: 累加器（Accumulator）应该选 24-bit 还是 32-bit？考虑到 INT8 乘法最大值为 $127 \times 127 \approx 16000$，DeiT 的 Hidden Dimension 约为 192，累加会不会溢出？
+Bit Width: 累加器（Accumulator）应该选 24-bit 还是 32-bit？考虑到 INT8 乘法最大值为 \(127 \times 127 \approx 16000\)，DeiT 的 Hidden Dimension 约为 192，累加会不会溢出？
 
 Unpacking: DDR 中的数据通常是 64-bit 宽（AXI HP）。如何将这 64-bit 拆解并分发给 12 行（或 16 行）的阵列？我们需要一个什么样的转换模块？
 
