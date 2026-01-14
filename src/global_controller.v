@@ -46,7 +46,7 @@ module global_controller (
     // 假设权重加载需要 `ARRAY_ROW 个周期 (串行推入每一列)
     // 或者如果是并行加载，可能需要 `ARRAY_ROW 个周期将数据填满 Shift Reg
     wire [31:0] TARGET_LOAD_CYCLES = `ARRAY_ROW; 
-    
+    wire [31:0] DRAIN_CYCLES = 32; 
     // 计算周期 = K维度 + 阵列流水线延迟 (Array Latency)
     // 脉动阵列的填充需要时间，我们这里简化模型，假设 K 周期流完输入
     wire [31:0] TARGET_COMPUTE_CYCLES = cfg_k_dim;
@@ -89,8 +89,7 @@ module global_controller (
                 // 这里为了简化，假设 Drain 需要固定周期 (例如行数 + 流水线深度)
                 // 暂时用固定值 10 个周期模拟 Output Drain
                 // 实际项目中需要根据 Output Buffer 的 Full/Empty 信号握手
-                if (cnt_k >= `ARRAY_ROW + 4) 
-                     next_state = S_DONE;
+                if (cnt_k >= 30) next_state = S_DONE;
             end
 
             S_DONE: begin

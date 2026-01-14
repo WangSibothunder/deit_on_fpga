@@ -129,6 +129,8 @@ module systolic_array_tb;
                                  $time, t_out, c, $signed(gold_val), $signed(dut_val));
                         err_count = err_count + 1;
                     end else begin
+                        $display("[PASS] Time %0t (Seq %0d) Col %0d: Expected %d, Got %d", 
+                                 $time, t_out, c, $signed(gold_val), $signed(dut_val));
                         pass_count = pass_count + 1;
                     end
                 end

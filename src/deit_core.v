@@ -1,16 +1,17 @@
 // -----------------------------------------------------------------------------
 // 文件名: deit_core.v
-// 描述: 加速器核心层集成 (已修复: 添加输入数据倾斜对齐逻辑)
+// 描述: 加速器核心层 (Fix: Input Skew + Output Deskew)
 // -----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
 `include "/Users/wangsibo/program/deit_on_fpga/src/params.vh"
 
+
 module deit_core (
     input  wire                         clk,
     input  wire                         rst_n,
 
-    // --- Control Interface ---
+    // --- Control ---
     input  wire                         ap_start,
     input  wire [31:0]                  cfg_compute_cycles,
     input  wire                         cfg_acc_mode,
@@ -22,11 +23,14 @@ module deit_core (
     input  wire [`ARRAY_COL*`DATA_WIDTH-1:0]  in_weight_vec,
     output wire [`ARRAY_COL*`ACC_WIDTH-1:0]   out_acc_vec,
     
+    // --- Buffer Controls ---
     output wire                         ctrl_weight_load_en,
     output wire                         ctrl_input_stream_en
 );
 
-    // 1. Instantiate Controller
+    // =========================================================================
+    // 1. Controller Instance
+    // =========================================================================
     wire ctrl_drain_en_unused;
     
     global_controller u_controller (
@@ -42,7 +46,9 @@ module deit_core (
         .ctrl_drain_en          (ctrl_drain_en_unused)
     );
 
-    // 2. Glue Logic: Row Load Enable (Shift Register)
+    // =========================================================================
+    // 2. Input Logic: Row Load Enable Shift Register
+    // =========================================================================
     reg [`ARRAY_ROW-1:0] row_load_en;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) row_load_en <= 0;
@@ -57,75 +63,107 @@ module deit_core (
     end
 
     // =========================================================================
-    // 3. FIX: Input Skew Buffer (三角延迟链)
+    // 3. Input Logic: Input Skew Buffer (Rect -> Diamond)
     // =========================================================================
-    // Row 0 延迟 0 拍，Row 1 延迟 1 拍 ... Row 11 延迟 11 拍
-    // 这样才能配合 Partial Sum 的垂直流动时序
-    
+    // Row i 延迟 i 个周期
     wire [`ARRAY_ROW*`DATA_WIDTH-1:0] skewed_in_act_vec;
 
-    genvar i;
+    genvar r;
     generate
-        for (i = 0; i < `ARRAY_ROW; i = i + 1) begin : INPUT_SKEW_LOGIC
-            if (i == 0) begin
-                // 第一行无需延迟
-                assign skewed_in_act_vec[(i*`DATA_WIDTH) +: `DATA_WIDTH] 
-                     = in_act_vec[(i*`DATA_WIDTH) +: `DATA_WIDTH];
+        for (r = 0; r < `ARRAY_ROW; r = r + 1) begin : IN_SKEW
+            if (r == 0) begin
+                assign skewed_in_act_vec[(r*`DATA_WIDTH) +: `DATA_WIDTH] 
+                     = in_act_vec[(r*`DATA_WIDTH) +: `DATA_WIDTH];
             end else begin
-                // 第 i 行需要 i 个周期的延迟
-                // 定义一个深度为 i，位宽为 DATA_WIDTH 的移位寄存器链
-                reg [(i*`DATA_WIDTH)-1:0] delay_chain;
-                
+                // 移位寄存器链
+                reg [(r*`DATA_WIDTH)-1:0] delay_chain;
                 always @(posedge clk or negedge rst_n) begin
                     if (!rst_n) delay_chain <= 0;
                     else begin
-                        // 移位逻辑: 左移一个 DATA_WIDTH，低位补入新数据
-                        // 如果深度为 1 (i=1): delay_chain <= in_data
-                        // 如果深度为 2 (i=2): delay_chain <= {delay_chain[7:0], in_data}
-                        if (i == 1) begin
-                            delay_chain <= in_act_vec[(i*`DATA_WIDTH) +: `DATA_WIDTH];
-                        end else begin
-                            delay_chain <= {
-                                delay_chain[((i-1)*`DATA_WIDTH)-1:0], 
-                                in_act_vec[(i*`DATA_WIDTH) +: `DATA_WIDTH]
-                            };
-                        end
+                        if (r == 1) delay_chain <= in_act_vec[(r*`DATA_WIDTH) +: `DATA_WIDTH];
+                        else delay_chain <= {delay_chain[((r-1)*`DATA_WIDTH)-1:0], in_act_vec[(r*`DATA_WIDTH) +: `DATA_WIDTH]};
                     end
                 end
-                
-                // 输出寄存器链的最高位部分 (最老的数据)
-                assign skewed_in_act_vec[(i*`DATA_WIDTH) +: `DATA_WIDTH] 
-                     = delay_chain[((i)*`DATA_WIDTH)-1 -: `DATA_WIDTH];
+                assign skewed_in_act_vec[(r*`DATA_WIDTH) +: `DATA_WIDTH] 
+                     = delay_chain[(r*`DATA_WIDTH)-1 -: `DATA_WIDTH];
             end
         end
     endgenerate
 
-    // -------------------------------------------------------------------------
-    // 4. Instantiate Systolic Array (Connected to SKEWED inputs)
-    // -------------------------------------------------------------------------
-    wire [`ARRAY_COL*`ACC_WIDTH-1:0] array_out_psum;
+    // =========================================================================
+    // 4. Systolic Array Instance
+    // =========================================================================
+    wire [`ARRAY_COL*`ACC_WIDTH-1:0] array_raw_out;
 
     systolic_array u_array (
         .clk            (clk),
         .rst_n          (rst_n),
-        .en_compute     (ctrl_input_stream_en), // 注意：阵列内部应该持续使能，这里简化处理
+        .en_compute     (ctrl_input_stream_en), // Simplified enable
         .row_load_en    (row_load_en),
-        .in_act_vec     (skewed_in_act_vec),     // <--- 连接修复后的信号
+        .in_act_vec     (skewed_in_act_vec),
         .in_weight_vec  (in_weight_vec),
-        .out_psum_vec   (array_out_psum)
+        .out_psum_vec   (array_raw_out)
     );
 
-    // -------------------------------------------------------------------------
-    // 5. Glue Logic: Latency Compensation
-    // -------------------------------------------------------------------------
-    // 阵列行延迟 = ARRAY_ROW (12).
-    // Skew Buffer 对最后一行也引入了 11 周期延迟 + 1 周期计算 = 12 周期.
-    // 所以，有效输出确实是在输入使能后的 12 个周期开始出现的。
-    // 这里的 LATENCY = 12 依然成立。
+    // =========================================================================
+    // 5. Output Logic: Output Deskew Buffer (Diamond -> Rect)
+    // =========================================================================
+    // 关键修复：我们要把菱形输出重新对齐。
+    // Col 0 最早出来，Col 15 最晚出来。
+    // Max Delay in Array = Row_Depth + Col_Width = 12 + 15 = 27 (relative to input start)
+    // Col c arrives at: 12 + c
+    // Delay needed for Col c: (Max_Delay) - (Arrival_Time) 
+    //                       = (12 + 15) - (12 + c) 
+    //                       = 15 - c
     
-    localparam LATENCY = `ARRAY_ROW+3; // FIX: 从 12 改为 13
+    wire [`ARRAY_COL*`ACC_WIDTH-1:0] aligned_out_vec;
+    genvar c;
+    
+    generate
+        for (c = 0; c < `ARRAY_COL; c = c + 1) begin : OUT_DESKEW
+            localparam DELAY_NEEDED = (`ARRAY_COL - 1) - c;
+            
+            if (DELAY_NEEDED == 0) begin
+                // Col 15 (最后一列) 不需要延迟
+                assign aligned_out_vec[(c*`ACC_WIDTH) +: `ACC_WIDTH] 
+                     = array_raw_out[(c*`ACC_WIDTH) +: `ACC_WIDTH];
+            end else begin
+                // Delay Chain for 32-bit Partial Sums
+                reg [(DELAY_NEEDED*`ACC_WIDTH)-1:0] out_delay_chain;
+                
+                always @(posedge clk or negedge rst_n) begin
+                    if (!rst_n) out_delay_chain <= 0;
+                    else begin
+                        if (DELAY_NEEDED == 1) 
+                            out_delay_chain <= array_raw_out[(c*`ACC_WIDTH) +: `ACC_WIDTH];
+                        else 
+                            out_delay_chain <= {out_delay_chain[((DELAY_NEEDED-1)*`ACC_WIDTH)-1:0], array_raw_out[(c*`ACC_WIDTH) +: `ACC_WIDTH]};
+                    end
+                end
+                
+                assign aligned_out_vec[(c*`ACC_WIDTH) +: `ACC_WIDTH] 
+                     = out_delay_chain[(DELAY_NEEDED*`ACC_WIDTH)-1 -: `ACC_WIDTH];
+            end
+        end
+    endgenerate
+
+    // =========================================================================
+    // 6. Glue Logic: Latency Compensation
+    // =========================================================================
+    // 总延迟 = Input Skew (TB+Sample) + Array Depth + Output Deskew
+    // TB Input Drive: 1 cycle (posedge to posedge sampling)
+    // Row 0 Input Reg: 0 cycle (direct assign in skew logic if r=0? No, let's trace)
+    // Actually simpler:
+    // Path for Col 15 (Critical Path):
+    // TB Drive (1) + Input Skew (0 for Row 0) + Horizontal (15) + Vertical (12) + Deskew (0) = 28?
+    // Let's use the constant we derived: Max Latency relative to input_en = 12 + 15 = 27.
+    // Plus 1 for TB driving delay.
+    // Plus maybe 1 for safety/registering.
+    // Let's try 29 (12 + 15 + 2).
+    
+    localparam LATENCY = `ARRAY_ROW + `ARRAY_COL + 1; // 12 + 16 + 1 = 29 (Conservative)
+    
     reg [LATENCY-1:0] valid_delay_line;
-    
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) valid_delay_line <= 0;
         else valid_delay_line <= {valid_delay_line[LATENCY-2:0], ctrl_input_stream_en};
@@ -133,9 +171,9 @@ module deit_core (
 
     wire acc_wr_en = valid_delay_line[LATENCY-1]; 
 
-    // -------------------------------------------------------------------------
-    // 6. Glue Logic: Address Generation
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 7. Address Gen & Accumulator
+    // =========================================================================
     reg [3:0] acc_addr;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -149,14 +187,13 @@ module deit_core (
         end
     end
 
-    // 7. Instantiate Accumulator Bank
     accumulator_bank u_accum (
         .clk            (clk),
         .rst_n          (rst_n),
         .addr           (acc_addr),
         .wr_en          (acc_wr_en),
         .acc_mode       (cfg_acc_mode),
-        .in_psum_vec    (array_out_psum),
+        .in_psum_vec    (aligned_out_vec), // Connected to ALIGNED signals
         .out_acc_vec    (out_acc_vec)
     );
 
