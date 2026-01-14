@@ -123,7 +123,7 @@ module deit_core (
     // 所以，有效输出确实是在输入使能后的 12 个周期开始出现的。
     // 这里的 LATENCY = 12 依然成立。
     
-    localparam LATENCY = `ARRAY_ROW + 1; // FIX: 从 12 改为 13
+    localparam LATENCY = `ARRAY_ROW+3; // FIX: 从 12 改为 13
     reg [LATENCY-1:0] valid_delay_line;
     
     always @(posedge clk or negedge rst_n) begin
