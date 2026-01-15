@@ -6,7 +6,7 @@ mkdir -p src/test_data
 
 # 2. 生成 Python 向量
 echo "[1/3] Generating Test Vectors..."
-python3 src/gen_vectors.py
+python src/gen_vectors.py
 
 if [ $? -ne 0 ]; then
     echo "Python script failed."
@@ -20,7 +20,7 @@ SIM_OUT="src/${MODULE_NAME}_sim.out"
 TB_FILE="src/deit_core_verify_tb.v"
 
 # 编译所有相关文件
-iverilog -g2005-sv -o $SIM_OUT \
+iverilog -I src -g2005-sv -o $SIM_OUT \
     src/params.vh \
     src/pe.v \
     src/single_column_bank.v \
@@ -43,3 +43,4 @@ vvp $SIM_OUT
 echo ""
 echo "Done. To view waveforms:"
 echo "gtkwave core_verify.vcd"
+gtkwave core_verify.vcd

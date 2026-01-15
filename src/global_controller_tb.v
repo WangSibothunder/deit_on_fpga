@@ -8,7 +8,7 @@
 // -----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
-// `include "params.vh"
+`include "params.vh"
 
 module global_controller_tb;
 

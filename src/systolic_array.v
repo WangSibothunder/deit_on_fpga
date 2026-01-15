@@ -8,7 +8,7 @@
 //    - Input: Left -> Right (Activations)
 //    - Output: Top -> Down (Partial Sums)
 // -----------------------------------------------------------------------------
-`include "/Users/wangsibo/program/deit_on_fpga/src/params.vh"
+`include "params.vh"
 
 
 module systolic_array (

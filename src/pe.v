@@ -7,7 +7,7 @@
 //    3. Data Pass: 将输入 Activation 向右传递 (out_act <= in_act)
 // -----------------------------------------------------------------------------
 
-`include "/Users/wangsibo/program/deit_on_fpga/src/params.vh"
+`include "params.vh"
 
 module pe (
     input  wire                     clk,

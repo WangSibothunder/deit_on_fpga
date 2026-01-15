@@ -1,13 +1,19 @@
 // -----------------------------------------------------------------------------
 // 文件名: deit_core.v
-// 描述: 加速器核心层 (Fix: Input Skew + Output Deskew)
+// 描述: 加速器核心层 (Refactored for Reliability)
+// 变更: 
+//   1. en_compute: 恒为 1 (除复位外)，防止流水线冻结。
+//   2. Debug Ports: 暴露内部状态，方便 TB 观测。
 // -----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
-`include "/Users/wangsibo/program/deit_on_fpga/src/params.vh"
+`include "params.vh"
 
-
-module deit_core (
+module deit_core #(
+    // 将 Latency 参数化，方便 TB 覆盖
+    // 默认值推导: RowDepth(12) + Deskew(15) + InputRegs(2) + Safety(2) = 31
+    parameter LATENCY_CFG = 28
+)(
     input  wire                         clk,
     input  wire                         rst_n,
 
@@ -25,7 +31,14 @@ module deit_core (
     
     // --- Buffer Controls ---
     output wire                         ctrl_weight_load_en,
-    output wire                         ctrl_input_stream_en
+    output wire                         ctrl_input_stream_en,
+
+    // --- DEBUG PORTS (观测窗) ---
+    output wire                         dbg_acc_wr_en,
+    output wire [3:0]                   dbg_acc_addr,
+    output wire [`ACC_WIDTH-1:0]        dbg_aligned_col0,  // 对齐后的第0列数据
+    output wire [`ACC_WIDTH-1:0]        dbg_aligned_col15, // 对齐后的第15列数据
+    output wire [`ACC_WIDTH-1:0]        dbg_raw_col0       // 未对齐的第0列数据
 );
 
     // =========================================================================
@@ -47,7 +60,7 @@ module deit_core (
     );
 
     // =========================================================================
-    // 2. Input Logic: Row Load Enable Shift Register
+    // 2. Input Logic: Row Load Enable
     // =========================================================================
     reg [`ARRAY_ROW-1:0] row_load_en;
     always @(posedge clk or negedge rst_n) begin
@@ -63,11 +76,9 @@ module deit_core (
     end
 
     // =========================================================================
-    // 3. Input Logic: Input Skew Buffer (Rect -> Diamond)
+    // 3. Input Skew Logic (Input Rect -> Diamond)
     // =========================================================================
-    // Row i 延迟 i 个周期
     wire [`ARRAY_ROW*`DATA_WIDTH-1:0] skewed_in_act_vec;
-
     genvar r;
     generate
         for (r = 0; r < `ARRAY_ROW; r = r + 1) begin : IN_SKEW
@@ -75,7 +86,6 @@ module deit_core (
                 assign skewed_in_act_vec[(r*`DATA_WIDTH) +: `DATA_WIDTH] 
                      = in_act_vec[(r*`DATA_WIDTH) +: `DATA_WIDTH];
             end else begin
-                // 移位寄存器链
                 reg [(r*`DATA_WIDTH)-1:0] delay_chain;
                 always @(posedge clk or negedge rst_n) begin
                     if (!rst_n) delay_chain <= 0;
@@ -94,11 +104,15 @@ module deit_core (
     // 4. Systolic Array Instance
     // =========================================================================
     wire [`ARRAY_COL*`ACC_WIDTH-1:0] array_raw_out;
+    
+    // FIX: 只要不在复位，就一直使能计算，保证流水线畅通
+    // 这是解决 "Frozen Pipeline" 最彻底的方法
+    wire safe_compute_en = 1'b1; 
 
     systolic_array u_array (
         .clk            (clk),
         .rst_n          (rst_n),
-        .en_compute     (ctrl_input_stream_en), // Simplified enable
+        .en_compute     (safe_compute_en), 
         .row_load_en    (row_load_en),
         .in_act_vec     (skewed_in_act_vec),
         .in_weight_vec  (in_weight_vec),
@@ -106,31 +120,19 @@ module deit_core (
     );
 
     // =========================================================================
-    // 5. Output Logic: Output Deskew Buffer (Diamond -> Rect)
+    // 5. Output Deskew Logic (Output Diamond -> Rect)
     // =========================================================================
-    // 关键修复：我们要把菱形输出重新对齐。
-    // Col 0 最早出来，Col 15 最晚出来。
-    // Max Delay in Array = Row_Depth + Col_Width = 12 + 15 = 27 (relative to input start)
-    // Col c arrives at: 12 + c
-    // Delay needed for Col c: (Max_Delay) - (Arrival_Time) 
-    //                       = (12 + 15) - (12 + c) 
-    //                       = 15 - c
-    
     wire [`ARRAY_COL*`ACC_WIDTH-1:0] aligned_out_vec;
     genvar c;
-    
     generate
         for (c = 0; c < `ARRAY_COL; c = c + 1) begin : OUT_DESKEW
             localparam DELAY_NEEDED = (`ARRAY_COL - 1) - c;
             
             if (DELAY_NEEDED == 0) begin
-                // Col 15 (最后一列) 不需要延迟
                 assign aligned_out_vec[(c*`ACC_WIDTH) +: `ACC_WIDTH] 
                      = array_raw_out[(c*`ACC_WIDTH) +: `ACC_WIDTH];
             end else begin
-                // Delay Chain for 32-bit Partial Sums
                 reg [(DELAY_NEEDED*`ACC_WIDTH)-1:0] out_delay_chain;
-                
                 always @(posedge clk or negedge rst_n) begin
                     if (!rst_n) out_delay_chain <= 0;
                     else begin
@@ -140,7 +142,6 @@ module deit_core (
                             out_delay_chain <= {out_delay_chain[((DELAY_NEEDED-1)*`ACC_WIDTH)-1:0], array_raw_out[(c*`ACC_WIDTH) +: `ACC_WIDTH]};
                     end
                 end
-                
                 assign aligned_out_vec[(c*`ACC_WIDTH) +: `ACC_WIDTH] 
                      = out_delay_chain[(DELAY_NEEDED*`ACC_WIDTH)-1 -: `ACC_WIDTH];
             end
@@ -148,31 +149,19 @@ module deit_core (
     endgenerate
 
     // =========================================================================
-    // 6. Glue Logic: Latency Compensation
+    // 6. Latency Compensation (Delay Line for Control)
     // =========================================================================
-    // 总延迟 = Input Skew (TB+Sample) + Array Depth + Output Deskew
-    // TB Input Drive: 1 cycle (posedge to posedge sampling)
-    // Row 0 Input Reg: 0 cycle (direct assign in skew logic if r=0? No, let's trace)
-    // Actually simpler:
-    // Path for Col 15 (Critical Path):
-    // TB Drive (1) + Input Skew (0 for Row 0) + Horizontal (15) + Vertical (12) + Deskew (0) = 28?
-    // Let's use the constant we derived: Max Latency relative to input_en = 12 + 15 = 27.
-    // Plus 1 for TB driving delay.
-    // Plus maybe 1 for safety/registering.
-    // Let's try 29 (12 + 15 + 2).
+    reg [LATENCY_CFG-1:0] valid_delay_line;
     
-    localparam LATENCY = `ARRAY_ROW + `ARRAY_COL + 1; // 12 + 16 + 1 = 29 (Conservative)
-    
-    reg [LATENCY-1:0] valid_delay_line;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) valid_delay_line <= 0;
-        else valid_delay_line <= {valid_delay_line[LATENCY-2:0], ctrl_input_stream_en};
+        else valid_delay_line <= {valid_delay_line[LATENCY_CFG-2:0], ctrl_input_stream_en};
     end
 
-    wire acc_wr_en = valid_delay_line[LATENCY-1]; 
+    wire acc_wr_en = valid_delay_line[LATENCY_CFG-1]; 
 
     // =========================================================================
-    // 7. Address Gen & Accumulator
+    // 7. Accumulator Bank
     // =========================================================================
     reg [3:0] acc_addr;
     always @(posedge clk or negedge rst_n) begin
@@ -193,8 +182,17 @@ module deit_core (
         .addr           (acc_addr),
         .wr_en          (acc_wr_en),
         .acc_mode       (cfg_acc_mode),
-        .in_psum_vec    (aligned_out_vec), // Connected to ALIGNED signals
+        .in_psum_vec    (aligned_out_vec),
         .out_acc_vec    (out_acc_vec)
     );
+
+    // =========================================================================
+    // 8. Debug Signal Assignments
+    // =========================================================================
+    assign dbg_acc_wr_en     = acc_wr_en;
+    assign dbg_acc_addr      = acc_addr;
+    assign dbg_aligned_col0  = aligned_out_vec[0 +: `ACC_WIDTH];
+    assign dbg_aligned_col15 = aligned_out_vec[(`ARRAY_COL-1)*`ACC_WIDTH +: `ACC_WIDTH];
+    assign dbg_raw_col0      = array_raw_out[0 +: `ACC_WIDTH];
 
 endmodule

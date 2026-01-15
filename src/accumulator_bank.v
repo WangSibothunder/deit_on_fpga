@@ -4,7 +4,7 @@
 // -----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
-`include "/Users/wangsibo/program/deit_on_fpga/src/params.vh"
+`include "params.vh"
 
 module accumulator_bank (
     input  wire                         clk,
