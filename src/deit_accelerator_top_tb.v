@@ -1,9 +1,8 @@
 // -----------------------------------------------------------------------------
 // 文件名: src/deit_accelerator_top_tb.v
-// 描述: DeiT Accelerator 全系统验证
-//       - 模拟 Zynq PS AXI-Lite 配置
-//       - 模拟 DMA AXI-Stream 数据搬运
-//       - 验证端到端 PPU 量化结果
+// 描述: DeiT Accelerator 全系统验证 (Fixed Address Width)
+//       - 修复了 AXI 地址位宽为 6-bit 以支持 PPU Bias/Enable 寄存器
+//       - 包含完整的系统级仿真流程
 // -----------------------------------------------------------------------------
 `timescale 1ns / 1ps
 
@@ -11,6 +10,7 @@ module deit_accelerator_top_tb;
 
     // --- 1. 参数与时钟 ---
     localparam C_S_AXI_DATA_WIDTH = 32;
+    // [FIX] 修改为 6 (支持 0x00 - 0x3F 地址空间)
     localparam C_S_AXI_ADDR_WIDTH = 6;
     
     // Matrix Dims
@@ -23,23 +23,25 @@ module deit_accelerator_top_tb;
 
     // --- 2. 接口信号 ---
     // AXI-Lite
-    reg  [4:0]  s_axi_awaddr;
-    reg         s_axi_awvalid;
-    wire        s_axi_awready;
-    reg  [31:0] s_axi_wdata;
-    reg  [3:0]  s_axi_wstrb;
-    reg         s_axi_wvalid;
-    wire        s_axi_wready;
-    wire [1:0]  s_axi_bresp;
-    wire        s_axi_bvalid;
-    reg         s_axi_bready;
-    reg  [4:0]  s_axi_araddr;
-    reg         s_axi_arvalid;
-    wire        s_axi_arready;
-    wire [31:0] s_axi_rdata;
-    wire [1:0]  s_axi_rresp;
-    wire        s_axi_rvalid;
-    reg         s_axi_rready;
+    // [FIX] 使用参数化位宽，而不是硬编码 [4:0]
+    reg  [C_S_AXI_ADDR_WIDTH-1:0]  s_axi_awaddr;
+    reg                            s_axi_awvalid;
+    wire                           s_axi_awready;
+    reg  [31:0]                    s_axi_wdata;
+    reg  [3:0]                     s_axi_wstrb;
+    reg                            s_axi_wvalid;
+    wire                           s_axi_wready;
+    wire [1:0]                     s_axi_bresp;
+    wire                           s_axi_bvalid;
+    reg                            s_axi_bready;
+    // [FIX] 使用参数化位宽
+    reg  [C_S_AXI_ADDR_WIDTH-1:0]  s_axi_araddr;
+    reg                            s_axi_arvalid;
+    wire                           s_axi_arready;
+    wire [31:0]                    s_axi_rdata;
+    wire [1:0]                     s_axi_rresp;
+    wire                           s_axi_rvalid;
+    reg                            s_axi_rready;
 
     // AXI-Stream RX (DMA -> FPGA)
     reg  [63:0] axis_in_tdata;
@@ -54,7 +56,10 @@ module deit_accelerator_top_tb;
     wire        axis_out_tlast;
 
     // --- 3. DUT 实例化 ---
-    deit_accelerator_top dut (
+    // 注意：TB 里的参数要传递给 DUT，虽然 DUT 默认也是 6，但显式传递是个好习惯
+    deit_accelerator_top #(
+        .C_S_AXI_ADDR_WIDTH(C_S_AXI_ADDR_WIDTH)
+    ) dut (
         .clk(clk), .rst_n(rst_n),
         // Lite
         .s_axi_awaddr(s_axi_awaddr), .s_axi_awvalid(s_axi_awvalid), .s_axi_awready(s_axi_awready),
@@ -68,24 +73,21 @@ module deit_accelerator_top_tb;
     );
 
     // --- 4. 仿真文件内存 ---
-    // Python生成的文件最大行数估计
-    // Weights: 24 lines (12 rows * 2 words)
-    // Inputs:  48 lines (32 M * 12 bytes / 8 bytes * 1.5? No, calculation in python)
-    // Let's alloc enough space.
     reg [63:0] file_input_k0 [0:255];
     reg [63:0] file_input_k1 [0:255];
     
-    reg [63:0] file_weight_k0_n0 [0:31]; // 12 rows * 2 lines = 24 lines
+    reg [63:0] file_weight_k0_n0 [0:31]; 
     reg [63:0] file_weight_k1_n0 [0:31];
     reg [63:0] file_weight_k0_n1 [0:31];
     reg [63:0] file_weight_k1_n1 [0:31];
 
-    reg [63:0] file_golden_n0 [0:127]; // 32 rows * 2 lines = 64 lines
+    reg [63:0] file_golden_n0 [0:127]; 
     reg [63:0] file_golden_n1 [0:127];
     
     reg [31:0] file_config [0:3];
 
     initial begin
+        // 使用相对路径，确保在根目录运行 ./src/simulate_top.sh 时能找到
         $readmemh("src/test_data_top/axis_input_k0.mem", file_input_k0);
         $readmemh("src/test_data_top/axis_input_k1.mem", file_input_k1);
         
@@ -103,7 +105,8 @@ module deit_accelerator_top_tb;
     // --- 5. AXI Helper Tasks ---
     
     task axi_lite_write;
-        input [4:0] addr;
+        // [FIX] 使用参数化位宽，支持 6-bit 地址
+        input [C_S_AXI_ADDR_WIDTH-1:0] addr;
         input [31:0] data;
         begin
             @(posedge clk);
@@ -126,30 +129,24 @@ module deit_accelerator_top_tb;
         integer i;
         integer limit;
         begin
-            // Determine limit and source
-            if (type_id == 0) begin // Weight: 12 rows * 2 words = 24 words
-                limit = 24; 
-            end else begin // Input: M(32) * 12 bytes = 384 bytes = 48 words (64-bit)
-                limit = 48;
-            end
+            if (type_id == 0) limit = 24; // Weight
+            else              limit = 48; // Input
 
             for (i = 0; i < limit; i = i + 1) begin
                 axis_in_tvalid <= 1;
                 // Select Data
                 if (type_id == 0) begin // Weight
-                    // tile_id[1]=n, tile_id[0]=k
                     case(tile_id)
-                        0: axis_in_tdata <= file_weight_k0_n0[i]; // k0 n0
-                        1: axis_in_tdata <= file_weight_k1_n0[i]; // k1 n0
-                        2: axis_in_tdata <= file_weight_k0_n1[i]; // k0 n1
-                        3: axis_in_tdata <= file_weight_k1_n1[i]; // k1 n1
+                        0: axis_in_tdata <= file_weight_k0_n0[i]; 
+                        1: axis_in_tdata <= file_weight_k1_n0[i]; 
+                        2: axis_in_tdata <= file_weight_k0_n1[i]; 
+                        3: axis_in_tdata <= file_weight_k1_n1[i]; 
                     endcase
                 end else begin // Input
                     if (tile_id == 0) axis_in_tdata <= file_input_k0[i];
                     else              axis_in_tdata <= file_input_k1[i];
                 end
                 
-                // Wait for Ready (Simple assumption: always ready)
                 @(posedge clk); 
             end
             axis_in_tvalid <= 0;
@@ -167,7 +164,7 @@ module deit_accelerator_top_tb;
             $display("[TB] Checking Output Stream for N=%0d...", n_idx);
             axis_out_tready <= 1;
             
-            // Expect M * 2 words (128-bit output split into 2)
+            // Expect M * 2 words
             for (i = 0; i < M_DIM*2; i = i + 1) begin
                 // Wait for valid
                 while (!axis_out_tvalid) @(posedge clk);
@@ -177,10 +174,10 @@ module deit_accelerator_top_tb;
                 
                 if (axis_out_tdata !== expected) begin
                     $display("[FAIL] Stream Word %0d: Exp %h, Got %h", i, expected, axis_out_tdata);
-                    err_cnt = err_cnt + 1;
+                    err_cnt++;
                 end
                 
-                @(posedge clk); // Consume
+                @(posedge clk); 
             end
             axis_out_tready <= 0;
             $display("[TB] Output Stream Check Done.");
@@ -195,6 +192,8 @@ module deit_accelerator_top_tb;
         clk = 0; rst_n = 0;
         s_axi_awvalid=0; s_axi_wvalid=0; s_axi_bready=0; s_axi_arvalid=0; s_axi_rready=0;
         axis_in_tvalid=0; axis_in_tlast=0; axis_out_tready=0;
+        // 初始化地址信号，防止 X 态
+        s_axi_awaddr = 0; s_axi_araddr = 0;
 
         #20 rst_n = 1;
         #50;
@@ -203,118 +202,90 @@ module deit_accelerator_top_tb;
 
         // 1. Config Global & PPU
         $display("[TB] 1. Configuring Registers...");
-        // M_DIM = 32
-        axi_lite_write(5'h08, 32); 
+        // [FIX] Address Width is now 6-bit. 
+        // 0x08 -> 6'h08
+        axi_lite_write(6'h08, 32);  // M_DIM = 32
+        
         // PPU Params
-        axi_lite_write(5'h14, file_config[0]); // Mult
-        axi_lite_write(5'h18, file_config[1]); // Shift
-        axi_lite_write(5'h1C, file_config[2]); // ZP
-        // Note: Bias is not yet in axi_lite (phase 5.3 added it? yes logic added in ppu, axi needed update)
-        // [WARNING]: 之前的 axi_lite_control.v 我们好像没把 Bias 接出来？
-        // 你的 axi_lite_control.v v1.2 里只有 mult, shift, zp。
-        // 为了跑通测试，我们暂时假定 bias=0 或者你手动修改了 rtl 添加 bias 端口。
-        // 如果没有 bias 端口，PPU 的 cfg_bias 输入是多少？
-        // *Important*: 上一轮 ppu.v 确实加了 bias。
-        // 但 top level 实例化时，`o_ppu_bias` 是连接到 axi_lite 的。
-        // 如果 axi_lite 没改好，这里就是 Z (高阻) 或者 0。
-        // 假设我们已经更新了 axi_lite_control 支持 bias (地址 0x20?)，如果没有，
-        // 在 TB 里我们先不管 bias (python 生成时设为 0 即可，或者确保 RTL 默认 0)。
-        // 修正: 我们假设你会在 axi_lite 加一个 bias 寄存器。如果没加，请确保 python 生成时 bias=0。
+        axi_lite_write(6'h14, file_config[0]); // Mult
+        axi_lite_write(6'h18, file_config[1]); // Shift
+        axi_lite_write(6'h1C, file_config[2]); // ZP
+        // [FIX] Bias is at 0x20 (Requires 6-bit address!)
+        axi_lite_write(6'h20, file_config[3]); // Bias
         
         // --- LOOP 1: Compute Output Tile N=0 ---
         $display("\n[TB] === Processing Output Tile N=0 ===");
         
         // 2.1 Process K=0
         $display("[TB] -> Step K=0: Load Weight & Compute (Overwrite)");
-        // A. Start Core (Trigger Weight Load)
-        axi_lite_write(5'h0C, 0); // ACC Mode = 0 (Overwrite)
-        axi_lite_write(5'h00, 1); // Start -> Controller goes to LOAD_W
+        // Disable Output (We don't want partial sums streamed out)
+        axi_lite_write(6'h24, 0); // Output Enable = 0
         
-        // B. Send Weight Stream (K=0, N=0)
-        // Controller waits for 12 cycles of valid data.
-        // Our gearbox needs 2 cycles per row. So 24 cycles.
-        // The controller counts 'rows loaded'. 
-        // Global Controller: "if (cnt_load >= 12-1) next = COMPUTE"
-        // Wait... Global Controller counts CYCLES or ROWS? 
-        // Logic: `cnt_load <= cnt_load + 1`. This is CYCLES.
-        // If we use Gearbox, it takes 2 cycles to load 1 row into array.
-        // So Controller needs to wait 24 cycles!
-        // **CRITICAL BUG DISCOVERY**: 
-        // If Weight Buffer has Gearbox (2-to-1), loading 12 rows takes 24 clock cycles.
-        // The Global Controller `LOAD_CYCLES` parameter must be 24, not 12!
-        // Or, Weight Buffer `ready` logic holds the controller?
-        // Current Controller just counts cycles. 
-        // **ACTION**: Update Controller param in TOP instantiation or RTL.
-        // Let's assume for now we fix Controller logic or parameter.
+        axi_lite_write(6'h0C, 0); // ACC Mode = 0 (Overwrite)
+        axi_lite_write(6'h00, 1); // Start
         
-        send_stream_data(0, 0); // Type=Wt, Tile={k0, n0} (24 words)
-        
-        // C. Controller transitions to COMPUTE (automatically after load cycles)
-        // Wait a bit for load to finish (approx 30 cycles)
+        send_stream_data(0, 0); // Type=Wt, Tile={k0, n0}
         #500; 
-        
-        // D. Send Input Stream (K=0)
-        send_stream_data(1, 0); // Type=In, Tile=k0 (48 words -> 32 rows)
-        
-        // E. Wait for Done
-        // Polling status reg
-        // axi_read(5'h04) ... (skip for brevity, wait time)
+        send_stream_data(1, 0); // Type=In, Tile=k0
         #1000;
 
         // 2.2 Process K=1
         $display("[TB] -> Step K=1: Load Weight & Compute (Accumulate)");
-        axi_lite_write(5'h0C, 1); // ACC Mode = 1 (Accumulate)
-        axi_lite_write(5'h00, 1); // Start again
+        // Enable Output (This is the final tile)
+        axi_lite_write(6'h24, 1); // Output Enable = 1
+        
+        axi_lite_write(6'h0C, 1); // ACC Mode = 1 (Accumulate)
+        axi_lite_write(6'h00, 1); // Start
         
         send_stream_data(0, 1); // Type=Wt, Tile={k1, n0}
         #500;
-        send_stream_data(1, 1); // Type=In, Tile=k1
-        #1000;
-
-        // 2.3 Readout Result
-        // The result is currently sitting in the Accumulator.
-        // How do we trigger PPU and Output Stream?
-        // In our current Top logic:
-        // PPU is connected to Core `acc_wr_en`. PPU outputs valid when Core writes acc.
-        // This means Output Stream happens REAL-TIME during the K=1 Compute phase?
-        // NO.
-        // If we are Accumulating (K=1), we are reading old, adding new, writing back.
-        // The "Final Result" is only valid after the accumulation is done?
-        // Wait, standard WS architecture:
-        // We only get result out when we want to move them to DDR.
-        // Currently, our PPU is connected to `core_to_ppu_data` which is `out_acc_vec`.
-        // `out_acc_vec` comes from `accumulator_bank` read port.
-        // During Compute K=1:
-        // Read(Old) -> Add -> Write(New).
-        // The `out_acc_vec` *is* the Old value being read! Or the New value being written?
-        // Check `deit_core`: `out_acc_vec` is connected to `aligned_out_vec`? 
-        // No, `u_accum` output.
-        // `single_column_bank`: `assign out_acc = mem[addr]`. This is the value AT ADDRESS.
-        // So during Compute, we see the partial sums.
-        // WE ONLY WANT TO STREAM OUT after the LAST K-Tile.
-        // Currently, our TOP design streams out *every time* valid data appears.
-        // This means for K=0, we stream out partials. For K=1, we stream out finals.
-        // **TB Strategy**: Ignore output from K=0 phase. Only check output from K=1 phase.
         
-        // But wait, the TB needs to capture the stream DURING the K=1 compute phase.
-        // So `check_output_stream` must run in parallel with `send_stream_data(1, 1)`.
-        
-        // Let's re-structure K=1 phase:
+        // Parallel Block: Send Data & Check Output
         fork
             begin
-                // Trigger Compute K=1 (Inputs)
-                // We already loaded weights previously? No, logic above is sequential.
-                // Let's assume we are at the point where we send inputs for K=1.
+                send_stream_data(1, 1); // Type=In, Tile=k1
             end
             begin
-                // Monitor Output
-                check_output_stream(0); // Check against Golden N=0
+                // Output check logic
+                check_output_stream(0);
             end
         join
-        // Correction: The above logic is tricky because we need to trigger the input stream to cause the output stream.
-        // Let's ignore this complexity for now and just check if we get *some* output that matches.
-        // Actually, since PPU is combinational + 1 reg, output appears with latency during compute.
+        #200;
+
+        // --- LOOP 2: Compute Output Tile N=1 ---
+        $display("\n[TB] === Processing Output Tile N=1 ===");
         
+        // 3.1 Process K=0
+        $display("[TB] -> Step K=0: Load Weight & Compute (Overwrite)");
+        axi_lite_write(6'h24, 0); // Disable Output
+        axi_lite_write(6'h0C, 0); // Mode Overwrite
+        axi_lite_write(6'h00, 1); // Start
+        
+        send_stream_data(0, 2); // Wt {k0, n1}
+        #500;
+        send_stream_data(1, 0); // In k0 (Reuse Input Tile 0)
+        #1000;
+
+        // 3.2 Process K=1
+        $display("[TB] -> Step K=1: Load Weight & Compute (Accumulate)");
+        axi_lite_write(6'h24, 1); // Enable Output
+        axi_lite_write(6'h0C, 1); // Mode Acc
+        axi_lite_write(6'h00, 1); // Start
+        
+        send_stream_data(0, 3); // Wt {k1, n1}
+        #500;
+        
+        fork
+            send_stream_data(1, 1); // In k1
+            check_output_stream(1); // Check Golden N=1
+        join
+        
+        #200;
+
+        if (err_cnt == 0) $display("\n=== SUCCESS: Full System Verified! ===\n");
+        else $display("\n=== FAILURE: Found %0d Errors ===\n", err_cnt);
+        
+        $finish;
     end
 
 endmodule
