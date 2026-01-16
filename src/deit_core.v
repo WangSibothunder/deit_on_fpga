@@ -1,18 +1,15 @@
 // -----------------------------------------------------------------------------
-// 文件名: deit_core.v
-// 描述: 加速器核心层 (Refactored for Reliability)
-// 变更: 
-//   1. en_compute: 恒为 1 (除复位外)，防止流水线冻结。
-//   2. Debug Ports: 暴露内部状态，方便 TB 观测。
+// 文件名: src/deit_core.v
+// 版本: 1.2 (Address Width Expansion)
+// 描述: 核心计算逻辑，已升级累加器地址位宽至 8-bit (支持 M=197)
 // -----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
 `include "params.vh"
 
 module deit_core #(
-    // 将 Latency 参数化，方便 TB 覆盖
-    // 默认值推导: RowDepth(12) + Deskew(15) + InputRegs(2) + Safety(2) = 31
-    parameter LATENCY_CFG = 28
+    parameter LATENCY_CFG = 28,
+    parameter ADDR_WIDTH  = 8 // NEW: Address Width Parameter
 )(
     input  wire                         clk,
     input  wire                         rst_n,
@@ -33,24 +30,26 @@ module deit_core #(
     output wire                         ctrl_weight_load_en,
     output wire                         ctrl_input_stream_en,
 
-    // --- DEBUG PORTS (观测窗) ---
+    // --- DEBUG PORTS (Updated Width) ---
     output wire                         dbg_acc_wr_en,
-    output wire [3:0]                   dbg_acc_addr,
-    output wire [`ACC_WIDTH-1:0]        dbg_aligned_col0,  // 对齐后的第0列数据
-    output wire [`ACC_WIDTH-1:0]        dbg_aligned_col15, // 对齐后的第15列数据
-    output wire [`ACC_WIDTH-1:0]        dbg_raw_col0       // 未对齐的第0列数据
+    output wire [ADDR_WIDTH-1:0]        dbg_acc_addr, // Expanded
+    output wire [`ACC_WIDTH-1:0]        dbg_aligned_col0,
+    output wire [`ACC_WIDTH-1:0]        dbg_aligned_col15,
+    output wire [`ACC_WIDTH-1:0]        dbg_raw_col0
 );
 
     // =========================================================================
-    // 1. Controller Instance
+    // 1. Controller
     // =========================================================================
     wire ctrl_drain_en_unused;
     
-    global_controller u_controller (
+    global_controller #(
+        .LATENCY(LATENCY_CFG)
+    ) u_controller (
         .clk                    (clk),
         .rst_n                  (rst_n),
         .ap_start               (ap_start),
-        .cfg_k_dim              (cfg_compute_cycles),
+        .cfg_seq_len            (cfg_compute_cycles),
         .ap_done                (ap_done),
         .ap_idle                (ap_idle),
         .current_state_dbg      (),
@@ -60,7 +59,7 @@ module deit_core #(
     );
 
     // =========================================================================
-    // 2. Input Logic: Row Load Enable
+    // 2. Input Row Load Logic
     // =========================================================================
     reg [`ARRAY_ROW-1:0] row_load_en;
     always @(posedge clk or negedge rst_n) begin
@@ -76,7 +75,7 @@ module deit_core #(
     end
 
     // =========================================================================
-    // 3. Input Skew Logic (Input Rect -> Diamond)
+    // 3. Input Skew
     // =========================================================================
     wire [`ARRAY_ROW*`DATA_WIDTH-1:0] skewed_in_act_vec;
     genvar r;
@@ -101,12 +100,9 @@ module deit_core #(
     endgenerate
 
     // =========================================================================
-    // 4. Systolic Array Instance
+    // 4. Systolic Array
     // =========================================================================
     wire [`ARRAY_COL*`ACC_WIDTH-1:0] array_raw_out;
-    
-    // FIX: 只要不在复位，就一直使能计算，保证流水线畅通
-    // 这是解决 "Frozen Pipeline" 最彻底的方法
     wire safe_compute_en = 1'b1; 
 
     systolic_array u_array (
@@ -120,7 +116,7 @@ module deit_core #(
     );
 
     // =========================================================================
-    // 5. Output Deskew Logic (Output Diamond -> Rect)
+    // 5. Output Deskew
     // =========================================================================
     wire [`ARRAY_COL*`ACC_WIDTH-1:0] aligned_out_vec;
     genvar c;
@@ -149,21 +145,21 @@ module deit_core #(
     endgenerate
 
     // =========================================================================
-    // 6. Latency Compensation (Delay Line for Control)
+    // 6. Latency Compensation (Valid Line)
     // =========================================================================
     reg [LATENCY_CFG-1:0] valid_delay_line;
-    
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) valid_delay_line <= 0;
         else valid_delay_line <= {valid_delay_line[LATENCY_CFG-2:0], ctrl_input_stream_en};
     end
-
     wire acc_wr_en = valid_delay_line[LATENCY_CFG-1]; 
 
     // =========================================================================
-    // 7. Accumulator Bank
+    // 7. Accumulator Bank Control (UPDATED)
     // =========================================================================
-    reg [3:0] acc_addr;
+    // Change reg width from 3:0 to ADDR_WIDTH-1:0
+    reg [ADDR_WIDTH-1:0] acc_addr; 
+    
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             acc_addr <= 0;
@@ -176,7 +172,9 @@ module deit_core #(
         end
     end
 
-    accumulator_bank u_accum (
+    accumulator_bank #(
+        .ADDR_WIDTH(ADDR_WIDTH) // Pass parameter
+    ) u_accum (
         .clk            (clk),
         .rst_n          (rst_n),
         .addr           (acc_addr),
@@ -187,7 +185,7 @@ module deit_core #(
     );
 
     // =========================================================================
-    // 8. Debug Signal Assignments
+    // 8. Debug Signals
     // =========================================================================
     assign dbg_acc_wr_en     = acc_wr_en;
     assign dbg_acc_addr      = acc_addr;

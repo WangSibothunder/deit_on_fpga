@@ -1,47 +1,46 @@
 // -----------------------------------------------------------------------------
-// 文件名: single_column_bank.v
-// 描述: 单列累加器存储单元
-// 架构: 使用 Distributed RAM (LUTRAM) 实现
-//       - Read: Asynchronous (Combinational)
-//       - Write: Synchronous (Clocked)
-//       - RMW: 可以在单周期内完成 (Read -> Add -> Write)
+// 文件名: src/single_column_bank.v
+// 版本: 2.0 (Parameterize Depth)
+// 描述: 单列累加器存储单元 (LUTRAM / BRAM)
+//       - 升级: 支持 DEPTH_LOG2 参数配置，默认为 8 (Depth 256) 以支持 ViT 序列长度
 // -----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
 `include "params.vh"
 
 module single_column_bank #(
-    parameter BANK_ID = 0
+    parameter BANK_ID    = 0,
+    parameter DEPTH_LOG2 = 8  // 2^8 = 256 > 197 (DeiT Sequence Length)
 )(
     input  wire                     clk,
     input  wire                     rst_n,
 
     // --- Control Interface ---
-    // addr: 同时用于读和写 (因为是单周期 RMW)
-    // 假设输入数据 in_psum 对应的就是这个 addr 的位置
-    input  wire [3:0]               addr,       // 深度 12，4-bit 足够
-    input  wire                     wr_en,      // 写使能
+    input  wire [DEPTH_LOG2-1:0]    addr,       // Width parameterised
+    input  wire                     wr_en,
     input  wire                     acc_mode,   // 0: Overwrite, 1: Accumulate
 
     // --- Data Interface ---
-    input  wire [`ACC_WIDTH-1:0]    in_psum,    // 来自阵列的新数据
-    output wire [`ACC_WIDTH-1:0]    out_acc     // 当前存储的值 (用于Debug或PPU)
+    input  wire [`ACC_WIDTH-1:0]    in_psum,    // Partial Sum in
+    output wire [`ACC_WIDTH-1:0]    out_acc     // Accumulator out
 );
 
     // -------------------------------------------------------------------------
-    // Memory Declaration (Distributed RAM)
+    // Memory Declaration
     // -------------------------------------------------------------------------
-    // 深度为 ARRAY_ROW (12)，取 2 的幂次 16 方便寻址
-    reg [`ACC_WIDTH-1:0] mem [0:15];
+    // Depth = 2^DEPTH_LOG2
+    // Vivado 可能会根据深度自动选择使用 Distributed RAM (LUT) 还是 Block RAM (BRAM)
+    // 对于 Depth=256, Width=32, 总共 8Kb。通常还是会用 LUTRAM，或者 0.5 个 BRAM。
+    (* ram_style = "distributed" *) 
+    reg [`ACC_WIDTH-1:0] mem [0:(1<<DEPTH_LOG2)-1];
 
     // -------------------------------------------------------------------------
-    // Asynchronous Read (LUTRAM 特性)
+    // Asynchronous Read (组合逻辑读)
     // -------------------------------------------------------------------------
-    // 直接组合逻辑读出旧值
     assign out_acc = mem[addr];
 
     // -------------------------------------------------------------------------
-    // Accumulation Logic
+    // Accumulate / Overwrite Logic
     // -------------------------------------------------------------------------
     wire [`ACC_WIDTH-1:0] old_val;
     wire [`ACC_WIDTH-1:0] sum_val;
@@ -49,9 +48,10 @@ module single_column_bank #(
 
     assign old_val = out_acc;
     
-    // 累加器: 如果是 ACC 模式，则加上旧值；否则直接覆盖
-    // 注意: 这里是有符号加法
+    // Signed Addition
     assign sum_val = $signed(old_val) + $signed(in_psum);
+    
+    // Mux for mode
     assign write_val = (acc_mode) ? sum_val : in_psum;
 
     // -------------------------------------------------------------------------
@@ -62,11 +62,11 @@ module single_column_bank #(
             mem[addr] <= write_val;
         end
     end
-    
-    // 初始化 (Optional, for simulation niceness)
+
+    // Init for simulation
     integer i;
     initial begin
-        for (i=0; i<16; i=i+1) mem[i] = 0;
+        for (i=0; i<(1<<DEPTH_LOG2); i=i+1) mem[i] = 0;
     end
 
 endmodule

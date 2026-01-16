@@ -10,7 +10,7 @@
 
 module axi_lite_control #(
     parameter C_S_AXI_DATA_WIDTH = 32,
-    parameter C_S_AXI_ADDR_WIDTH = 5 
+    parameter C_S_AXI_ADDR_WIDTH = 6 
 )(
     // --- Global Signals ---
     input  wire                                 clk,
@@ -47,7 +47,8 @@ module axi_lite_control #(
     output wire [15:0]                          o_ppu_mult,
     output wire [4:0]                           o_ppu_shift,
     output wire [7:0]                           o_ppu_zp,
-    output wire [31:0]                          o_ppu_bias
+    output wire [31:0]                          o_ppu_bias,   // [FIX] 之前是 placeholder，现在接上逻辑
+    output wire                                 o_output_en   // [NEW] 控制 PPU 是否输出结果
 );
 
     // -------------------------------------------------------------------------
@@ -63,7 +64,9 @@ module axi_lite_control #(
     localparam ADDR_PPU_MULT    = 5'h14; 
     localparam ADDR_PPU_SHIFT   = 5'h18; 
     localparam ADDR_PPU_ZP      = 5'h1C; 
-
+    // [NEW] 新增寄存器地址
+    localparam ADDR_PPU_BIAS    = 6'h20; // 32-bit Bias
+    localparam ADDR_OUTPUT_EN   = 6'h24; // 1-bit Enable
     localparam VERSION_ID       = 32'h20260117;
 
     // -------------------------------------------------------------------------
@@ -77,6 +80,8 @@ module axi_lite_control #(
     reg [31:0] reg_ppu_mult;
     reg [31:0] reg_ppu_shift;
     reg [31:0] reg_ppu_zp;
+    reg [31:0] reg_ppu_bias;  // [NEW]
+    reg [31:0] reg_output_en; // [NEW]
 
     // -------------------------------------------------------------------------
     // AXI Write Channel
@@ -87,6 +92,8 @@ module axi_lite_control #(
             reg_ctrl <= 0; reg_cfg_k <= 0; reg_cfg_acc <= 0;
             reg_ppu_mult <= 0; reg_ppu_shift <= 0; reg_ppu_zp <= 0;
             o_ap_start <= 0;
+            reg_ppu_bias <= 0;
+            reg_output_en <= 0;
         end else begin
             // Default: Clear Pulse
             if (o_ap_start) o_ap_start <= 0;
@@ -97,23 +104,26 @@ module axi_lite_control #(
             if (!s_axi_awready && !s_axi_wready && s_axi_awvalid && s_axi_wvalid) begin
                 s_axi_awready <= 1; s_axi_wready <= 1;
                 
-                case (s_axi_awaddr[4:2])
-                    3'h0: begin // 0x00 CTRL
+                case (s_axi_awaddr[5:2])
+                    4'h0: begin // 0x00 CTRL
                         if (s_axi_wstrb[0]) begin
                              if (s_axi_wdata[0]) o_ap_start <= 1; // Trigger Pulse
                              reg_ctrl[1] <= s_axi_wdata[1];       // Soft Reset Level
                         end
                     end
-                    3'h1: begin // 0x04 STATUS (W1C for Bit 0)
+                    4'h1: begin // 0x04 STATUS (W1C for Bit 0)
                         if (s_axi_wstrb[0] && s_axi_wdata[0]) reg_status[0] <= 0;
                     end
-                    3'h2: if (s_axi_wstrb[0]) reg_cfg_k <= s_axi_wdata;
-                    3'h3: if (s_axi_wstrb[0]) reg_cfg_acc <= s_axi_wdata;
+                    4'h2: if (s_axi_wstrb[0]) reg_cfg_k <= s_axi_wdata;
+                    4'h3: if (s_axi_wstrb[0]) reg_cfg_acc <= s_axi_wdata;
                     
                     // PPU Configs
-                    3'h5: if (s_axi_wstrb[0]) reg_ppu_mult <= s_axi_wdata;
-                    3'h6: if (s_axi_wstrb[0]) reg_ppu_shift <= s_axi_wdata;
-                    3'h7: if (s_axi_wstrb[0]) reg_ppu_zp <= s_axi_wdata;
+                    4'h5: if (s_axi_wstrb[0]) reg_ppu_mult <= s_axi_wdata;
+                    4'h6: if (s_axi_wstrb[0]) reg_ppu_shift <= s_axi_wdata;
+                    4'h7: if (s_axi_wstrb[0]) reg_ppu_zp <= s_axi_wdata;
+                    // [NEW] Bias & Output Enable
+                    4'h8: if (s_axi_wstrb[0]) reg_ppu_bias <= s_axi_wdata;  // 0x20
+                    4'h9: if (s_axi_wstrb[0]) reg_output_en <= s_axi_wdata; // 0x24
                 endcase
             end
 
@@ -149,15 +159,17 @@ module axi_lite_control #(
         end else begin
             if (!s_axi_arready && s_axi_arvalid) begin
                 s_axi_arready <= 1;
-                case (s_axi_araddr[4:2])
-                    3'h0: s_axi_rdata <= reg_ctrl;
-                    3'h1: s_axi_rdata <= reg_status;
-                    3'h2: s_axi_rdata <= reg_cfg_k;
-                    3'h3: s_axi_rdata <= reg_cfg_acc;
-                    3'h4: s_axi_rdata <= VERSION_ID;
-                    3'h5: s_axi_rdata <= reg_ppu_mult;
-                    3'h6: s_axi_rdata <= reg_ppu_shift;
-                    3'h7: s_axi_rdata <= reg_ppu_zp;
+                case (s_axi_araddr[5:2])
+                    4'h0: s_axi_rdata <= reg_ctrl;
+                    4'h1: s_axi_rdata <= reg_status;
+                    4'h2: s_axi_rdata <= reg_cfg_k;
+                    4'h3: s_axi_rdata <= reg_cfg_acc;
+                    4'h4: s_axi_rdata <= VERSION_ID;
+                    4'h5: s_axi_rdata <= reg_ppu_mult;
+                    4'h6: s_axi_rdata <= reg_ppu_shift;
+                    4'h7: s_axi_rdata <= reg_ppu_zp;
+                    4'h8: s_axi_rdata <= reg_ppu_bias; // [NEW]
+                    4'h9: s_axi_rdata <= reg_output_en; // [NEW]
                     default: s_axi_rdata <= 0;
                 endcase
             end else begin
@@ -181,6 +193,8 @@ module axi_lite_control #(
     assign o_ppu_mult  = reg_ppu_mult[15:0];
     assign o_ppu_shift = reg_ppu_shift[4:0];
     assign o_ppu_zp    = reg_ppu_zp[7:0];
-    assign o_ppu_bias  = 0; // Placeholder
+    // [FIX] 连接新信号
+    assign o_ppu_bias  = reg_ppu_bias;
+    assign o_output_en = reg_output_en[0];
 
 endmodule

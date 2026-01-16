@@ -2,12 +2,12 @@
 
 # 1. 重新生成随机测试数据 (确保 Python 脚本正确)
 echo "[1/4] Generating Logic Vectors..."
-python3 src/gen_vectors.py
+python src/gen_vectors.py
 
 # 2. 编译 RTL (包含新的 TB)
 echo "[2/4] Compiling Verilog..."
 # 注意: 我们只编译阵列相关的底层文件，不包含 controller 和 core
-iverilog -o src/systolic_sim.out \
+iverilog -I src -o src/systolic_sim.out \
     src/params.vh \
     src/pe.v \
     src/systolic_array.v \
