@@ -105,7 +105,8 @@ echo "[3/3] Running Simulation..."
 vvp $SIM_OUT
 
 # 5. 调试 (GTKWave)
-echo "Done. To view waveforms: gtkwave core_verify.vcd"
+gtkwave core_verify.vcd
+echo "Done"
 
 
 3. PL 侧硬件模块详解 (Hardware Specifications)
@@ -270,12 +271,70 @@ AXI-Stream Interface (axis_wrapper.v):
 +--------------------------------------------------------+------------+
 
 
-5. 当前调试备忘 (Debug Notes)
+DeiT-Tiny FPGA Accelerator Roadmap
 
-时序对齐: 核心集成的关键在于 deit_core.v 中的 LATENCY 参数。每次修改 TB 的驱动逻辑或 Array 深度时，必须重新校准此参数。
+Phase 1: Mathematical Modeling & Verification (Completed)
 
-数据流冻结: 务必保证 en_compute 在输入结束后继续有效（利用 Drain 信号），否则流水线中的数据会丢失。
+[x] Python Golden Model (Quantized Matrix Multiplication)
 
-地址复位: global_controller 的 DRAIN_CYCLES 必须足够长，防止 Accumulator 的地址计数器在数据写完前被复位。
+[x] Systolic Array Cycle-Accurate Simulator
 
-Document Version: 1.0 (Phase 4 Verified)
+[x] Fixed-Point Analysis (PPU Logic)
+
+Phase 2: Core RTL Design (Completed)
+
+[x] PE Design (INT8 MAC)
+
+[x] Systolic Array ($12 \times 16$)
+
+[x] Accumulator Bank (Depth 256 for $M=197$)
+
+[x] Global Controller (State Machine)
+
+Phase 3: Core Verification (Completed)
+
+[x] deit_core verified with $32 \times 24$ random matrices.
+
+[x] Input Skew / Output Deskew timing verified.
+
+[x] Accumulator address wrap-around fix verified.
+
+Phase 4: PL Overlay & System Support (Completed)
+
+[x] Input Buffer (Ping-Pong, Gearbox 64->96)
+
+[x] Weight Buffer (Gearbox 64->128)
+
+[x] PPU (Quantization, Bias, Shift)
+
+[x] AXI-Lite Control (Register File, 6-bit addressing)
+
+Phase 5: System Integration (Current Phase)
+
+[x] Top-Level Module (deit_accelerator_top.v) Assembly
+
+[ ] Task 5.4: Top-Level Simulation (simulate_top.sh)
+
+Status: Debugging hangs/timeouts.
+
+Issues: Soft Reset release, Load Cycle timing, AXI width mismatch.
+
+Goal: Pass full system simulation with Python-generated vectors.
+
+Phase 6: Vivado Implementation (Next)
+
+[ ] IP Packaging (Vivado IP Integrator)
+
+[ ] Block Design (Zynq PS + DMA + Accelerator)
+
+[ ] Synthesis & Timing Closure (Target 100MHz)
+
+[ ] Bitstream Generation
+
+Phase 7: PYNQ Deployment
+
+[ ] Python Driver (Overlay class)
+
+[ ] Unit Test on Hardware
+
+[ ] Full Network Inference
