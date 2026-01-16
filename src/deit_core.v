@@ -28,6 +28,7 @@ module deit_core #(
     
     // --- Buffer Controls ---
     output wire                         ctrl_weight_load_en,
+    output wire                         ctrl_weight_dma_req, // [NEW]
     output wire                         ctrl_input_stream_en,
 
     // --- DEBUG PORTS (Updated Width) ---
@@ -53,6 +54,7 @@ module deit_core #(
         .ap_done                (ap_done),
         .ap_idle                (ap_idle),
         .current_state_dbg      (),
+        .ctrl_weight_dma_req    (ctrl_weight_dma_req), // [NEW]
         .ctrl_weight_load_en    (ctrl_weight_load_en),
         .ctrl_input_stream_en   (ctrl_input_stream_en),
         .ctrl_drain_en          (ctrl_drain_en_unused)

@@ -1,8 +1,9 @@
 // -----------------------------------------------------------------------------
 // 文件名: src/deit_accelerator_top_tb.v
-// 描述: DeiT Accelerator 全系统验证 (Fixed Address Width)
-//       - 修复了 AXI 地址位宽为 6-bit 以支持 PPU Bias/Enable 寄存器
-//       - 包含完整的系统级仿真流程
+// 描述: DeiT Accelerator 全系统验证 (Fixed Timing & Concurrency)
+//       - Fix 1: 使用 fork-join 并行发送权重，解决 Controller 盲计数导致的窗口错生问题
+//       - Fix 2: 增加 TLAST 驱动，确保 Buffer 指针复位
+//       - Fix 3: 输入数据 (Input) 在 Start 之前预加载，避免 Compute 阶段无数据
 // -----------------------------------------------------------------------------
 `timescale 1ns / 1ps
 
@@ -10,7 +11,6 @@ module deit_accelerator_top_tb;
 
     // --- 1. 参数与时钟 ---
     localparam C_S_AXI_DATA_WIDTH = 32;
-    // [FIX] 修改为 6 (支持 0x00 - 0x3F 地址空间)
     localparam C_S_AXI_ADDR_WIDTH = 6;
     
     // Matrix Dims
@@ -23,7 +23,6 @@ module deit_accelerator_top_tb;
 
     // --- 2. 接口信号 ---
     // AXI-Lite
-    // [FIX] 使用参数化位宽，而不是硬编码 [4:0]
     reg  [C_S_AXI_ADDR_WIDTH-1:0]  s_axi_awaddr;
     reg                            s_axi_awvalid;
     wire                           s_axi_awready;
@@ -34,7 +33,7 @@ module deit_accelerator_top_tb;
     wire [1:0]                     s_axi_bresp;
     wire                           s_axi_bvalid;
     reg                            s_axi_bready;
-    // [FIX] 使用参数化位宽
+    
     reg  [C_S_AXI_ADDR_WIDTH-1:0]  s_axi_araddr;
     reg                            s_axi_arvalid;
     wire                           s_axi_arready;
@@ -56,7 +55,6 @@ module deit_accelerator_top_tb;
     wire        axis_out_tlast;
 
     // --- 3. DUT 实例化 ---
-    // 注意：TB 里的参数要传递给 DUT，虽然 DUT 默认也是 6，但显式传递是个好习惯
     deit_accelerator_top #(
         .C_S_AXI_ADDR_WIDTH(C_S_AXI_ADDR_WIDTH)
     ) dut (
@@ -87,7 +85,8 @@ module deit_accelerator_top_tb;
     reg [31:0] file_config [0:3];
 
     initial begin
-        // 使用相对路径，确保在根目录运行 ./src/simulate_top.sh 时能找到
+        // 使用相对路径
+        // 注意：如果文件长度小于数组长度，Icarus 会报 Warning，这是正常的，只要有效数据部分被填满即可。
         $readmemh("src/test_data_top/axis_input_k0.mem", file_input_k0);
         $readmemh("src/test_data_top/axis_input_k1.mem", file_input_k1);
         
@@ -105,7 +104,6 @@ module deit_accelerator_top_tb;
     // --- 5. AXI Helper Tasks ---
     
     task axi_lite_write;
-        // [FIX] 使用参数化位宽，支持 6-bit 地址
         input [C_S_AXI_ADDR_WIDTH-1:0] addr;
         input [31:0] data;
         begin
@@ -122,10 +120,10 @@ module deit_accelerator_top_tb;
         end
     endtask
 
-    // DMA Send Task
+    // DMA Send Task (With TLAST Fix)
     task send_stream_data;
         input [1:0] type_id; // 0: Weight, 1: Input
-        input integer tile_id; // For weight: {k, n}, for input: k
+        input integer tile_id; 
         integer i;
         integer limit;
         begin
@@ -134,6 +132,11 @@ module deit_accelerator_top_tb;
 
             for (i = 0; i < limit; i = i + 1) begin
                 axis_in_tvalid <= 1;
+                
+                // Assert TLAST on the last beat
+                if (i == limit - 1) axis_in_tlast <= 1;
+                else                axis_in_tlast <= 0;
+
                 // Select Data
                 if (type_id == 0) begin // Weight
                     case(tile_id)
@@ -174,7 +177,7 @@ module deit_accelerator_top_tb;
                 
                 if (axis_out_tdata !== expected) begin
                     $display("[FAIL] Stream Word %0d: Exp %h, Got %h", i, expected, axis_out_tdata);
-                    err_cnt++;
+                    err_cnt = err_cnt + 1;
                 end
                 
                 @(posedge clk); 
@@ -192,7 +195,6 @@ module deit_accelerator_top_tb;
         clk = 0; rst_n = 0;
         s_axi_awvalid=0; s_axi_wvalid=0; s_axi_bready=0; s_axi_arvalid=0; s_axi_rready=0;
         axis_in_tvalid=0; axis_in_tlast=0; axis_out_tready=0;
-        // 初始化地址信号，防止 X 态
         s_axi_awaddr = 0; s_axi_araddr = 0;
 
         #20 rst_n = 1;
@@ -202,82 +204,105 @@ module deit_accelerator_top_tb;
 
         // 1. Config Global & PPU
         $display("[TB] 1. Configuring Registers...");
-        // [FIX] Address Width is now 6-bit. 
-        // 0x08 -> 6'h08
+        // [FIX] CRITICAL: 先释放软复位 (Bit 1 = 1)，否则 Input Buffer 无法写入！
+        // 0x02 = 00...0010 (Soft Reset = 1, Start = 0)
+        axi_lite_write(6'h00, 2); 
+        
         axi_lite_write(6'h08, 32);  // M_DIM = 32
         
         // PPU Params
-        axi_lite_write(6'h14, file_config[0]); // Mult
-        axi_lite_write(6'h18, file_config[1]); // Shift
-        axi_lite_write(6'h1C, file_config[2]); // ZP
-        // [FIX] Bias is at 0x20 (Requires 6-bit address!)
+        axi_lite_write(6'h14, file_config[0]); 
+        axi_lite_write(6'h18, file_config[1]); 
+        axi_lite_write(6'h1C, file_config[2]); 
         axi_lite_write(6'h20, file_config[3]); // Bias
         
         // --- LOOP 1: Compute Output Tile N=0 ---
         $display("\n[TB] === Processing Output Tile N=0 ===");
         
         // 2.1 Process K=0
-        $display("[TB] -> Step K=0: Load Weight & Compute (Overwrite)");
-        // Disable Output (We don't want partial sums streamed out)
+        $display("[TB] -> Step K=0: Pre-load Input, Load Weight & Compute");
         axi_lite_write(6'h24, 0); // Output Enable = 0
-        
         axi_lite_write(6'h0C, 0); // ACC Mode = 0 (Overwrite)
-        axi_lite_write(6'h00, 1); // Start
         
-        send_stream_data(0, 0); // Type=Wt, Tile={k0, n0}
-        #500; 
+        // Strategy: 
+        // 1. Send Inputs (Safe in IDLE)
         send_stream_data(1, 0); // Type=In, Tile=k0
-        #1000;
-
-        // 2.2 Process K=1
-        $display("[TB] -> Step K=1: Load Weight & Compute (Accumulate)");
-        // Enable Output (This is the final tile)
-        axi_lite_write(6'h24, 1); // Output Enable = 1
         
-        axi_lite_write(6'h0C, 1); // ACC Mode = 1 (Accumulate)
-        axi_lite_write(6'h00, 1); // Start
-        
-        send_stream_data(0, 1); // Type=Wt, Tile={k1, n0}
-        #500;
-        
-        // Parallel Block: Send Data & Check Output
+        // 2. Trigger Start & Send Weights concurrently
         fork
+            axi_lite_write(6'h00, 3); // Start=1, Rst=1
             begin
-                send_stream_data(1, 1); // Type=In, Tile=k1
-            end
-            begin
-                // Output check logic
-                check_output_stream(0);
+                // Snooping internal signal to sync with Hardware Start
+                wait(dut.u_control.o_ap_start == 1);
+                @(posedge clk); // Align with state transition
+                send_stream_data(0, 0); // Type=Wt, Tile={k0, n0}
             end
         join
+        
+        // Wait for compute to finish (M=32 + Latency ~30 + Drain) -> ~100 cycles
+        #1500; 
+
+        // 2.2 Process K=1
+        $display("[TB] -> Step K=1: Pre-load Input, Load Weight & Compute (Accumulate)");
+        axi_lite_write(6'h24, 1); // Output Enable = 1
+        axi_lite_write(6'h0C, 1); // ACC Mode = 1 (Accumulate)
+        
+        send_stream_data(1, 1); // Type=In, Tile=k1 (Pre-load)
+        
+        fork
+            axi_lite_write(6'h00, 3); // Start
+            begin
+                wait(dut.u_control.o_ap_start == 1);
+                @(posedge clk);
+                send_stream_data(0, 1); // Type=Wt, Tile={k1, n0}
+            end
+            // Check Output concurrently (PPU will output after compute)
+            check_output_stream(0);
+        join
+        
         #200;
 
         // --- LOOP 2: Compute Output Tile N=1 ---
         $display("\n[TB] === Processing Output Tile N=1 ===");
         
         // 3.1 Process K=0
-        $display("[TB] -> Step K=0: Load Weight & Compute (Overwrite)");
-        axi_lite_write(6'h24, 0); // Disable Output
-        axi_lite_write(6'h0C, 0); // Mode Overwrite
-        axi_lite_write(6'h00, 1); // Start
+        $display("[TB] -> Step K=0: Reuse Input, Load Weight & Compute");
+        axi_lite_write(6'h24, 0); 
+        axi_lite_write(6'h0C, 0); 
         
-        send_stream_data(0, 2); // Wt {k0, n1}
-        #500;
-        send_stream_data(1, 0); // In k0 (Reuse Input Tile 0)
-        #1000;
-
-        // 3.2 Process K=1
-        $display("[TB] -> Step K=1: Load Weight & Compute (Accumulate)");
-        axi_lite_write(6'h24, 1); // Enable Output
-        axi_lite_write(6'h0C, 1); // Mode Acc
-        axi_lite_write(6'h00, 1); // Start
-        
-        send_stream_data(0, 3); // Wt {k1, n1}
-        #500;
+        // Note: Inputs are NOT re-sent here. We assume they are still in Buffer?
+        // Actually, buffer is simple. If we don't swap, we just overwrite.
+        // But for N loop, K inputs are the same! 
+        // We must RE-SEND inputs because we overwrote K0 with K1 in the buffer during previous step.
+        // Wait, input buffer size? 
+        // Simplest strategy: Just reload inputs every time.
+        send_stream_data(1, 0); // Reload Input k0
         
         fork
-            send_stream_data(1, 1); // In k1
-            check_output_stream(1); // Check Golden N=1
+            axi_lite_write(6'h00, 3);
+            begin
+                wait(dut.u_control.o_ap_start == 1);
+                @(posedge clk);
+                send_stream_data(0, 2); // Wt {k0, n1}
+            end
+        join
+        #1500;
+
+        // 3.2 Process K=1
+        $display("[TB] -> Step K=1: Reuse Input, Load Weight & Compute");
+        axi_lite_write(6'h24, 1); 
+        axi_lite_write(6'h0C, 1); 
+        
+        send_stream_data(1, 1); // Reload Input k1
+        
+        fork
+            axi_lite_write(6'h00, 3); 
+            begin
+                wait(dut.u_control.o_ap_start == 1);
+                @(posedge clk);
+                send_stream_data(0, 3); // Wt {k1, n1}
+            end
+            check_output_stream(1); 
         join
         
         #200;
