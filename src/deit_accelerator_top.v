@@ -110,13 +110,13 @@ module deit_accelerator_top #(
     end
     wire start_rising_edge = ctrl_ap_start & ~ctrl_ap_start_d;
 
-    // 2. Weight Buffer Swap: Trigger on Load Enable (Phase 1 done, entering Phase 2)
-    reg core_weight_load_en_d;
+    // 捕获 DMA 结束的下降沿
+    reg dma_req_d;
     always @(posedge clk or negedge sys_rst_n) begin
-        if (!sys_rst_n) core_weight_load_en_d <= 0; // [FIX] Add Reset
-        else core_weight_load_en_d <= core_weight_load_en;
+        if (!sys_rst_n) dma_req_d <= 0; // [FIX] Add Reset
+        else dma_req_d <= core_weight_dma_req;
     end
-    wire weight_read_rising_edge = core_weight_load_en & ~core_weight_load_en_d;
+    wire dma_done_pulse = ~core_weight_dma_req & dma_req_d;
 
     // --- Buffers ---
     input_buffer_ctrl #(
@@ -132,7 +132,7 @@ module deit_accelerator_top #(
         .clk(clk), .rst_n(sys_rst_n),
         .s_axis_tdata(axis_in_tdata), .s_axis_tvalid(wbuf_in_valid), .s_axis_tready(),
         .i_weight_load_en(core_weight_load_en), .o_weight_vec(wbuf_to_core_data),
-        .i_bank_swap(weight_read_rising_edge)
+        .i_bank_swap(dma_done_pulse)
     );
 
     // --- Core ---
