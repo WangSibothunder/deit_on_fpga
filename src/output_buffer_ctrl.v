@@ -138,7 +138,8 @@ module output_buffer_ctrl #(
                             // 流水线优化：如果 FIFO 还有数据，立刻读下一个
                             fifo_re <= 1;
                             rd_ptr <= rd_ptr + 1;
-                            state <= S_FETCH;
+                            data_cache <= mem[rd_ptr[DEPTH_LOG2-1:0] ]; 
+                            state <= S_SEND_LOW;
                             
                         end else begin
                             // FIFO 空了，回到 IDLE
