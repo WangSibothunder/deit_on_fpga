@@ -168,7 +168,7 @@ module deit_accelerator_top_tb;
             axis_out_tready <= 1;
             
             // Expect M * 2 words
-            for (i = 0; i < M_DIM; i = i + 1) begin
+            for (i = 0; i < M_DIM*2; i = i + 1) begin
                 // Wait for valid
                 while (!axis_out_tvalid) @(posedge clk);
                 
@@ -178,6 +178,8 @@ module deit_accelerator_top_tb;
                 if (axis_out_tdata !== expected) begin
                     $display("[FAIL] Stream Word %0d: Exp %h, Got %h", i, expected, axis_out_tdata);
                     err_cnt = err_cnt + 1;
+                end else begin
+                    $display("[PASS] Stream Word %0d: Exp %h, Got %h", i, expected, axis_out_tdata);
                 end
                 
                 @(posedge clk); 

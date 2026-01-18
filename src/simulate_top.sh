@@ -38,6 +38,7 @@ iverilog -g2005-sv -I src -o ${SIM_OUT} \
     src/deit_core.v \
     src/ppu.v \
     src/axi_lite_control.v \
+    src/output_buffer_ctrl.v \
     src/${MODULE}.v \
     src/${TB_MODULE}.v
 

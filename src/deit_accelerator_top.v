@@ -1,9 +1,11 @@
 // -----------------------------------------------------------------------------
 // 文件名: src/deit_accelerator_top.v
-// 描述: DeiT 加速器顶层模块 (Fixed MUX & Swap Logic)
-//       - Fix 1: 使用 core_weight_dma_req 控制 Weight Buffer 写入 (Phase 1)
-//       - Fix 2: 使用 core_weight_load_en 上升沿触发 Weight Buffer Swap (Phase 2 Start)
-//       - Fix 3: Input Buffer 使用 Start 信号触发 Swap
+// 版本: Phase 5 Final (Integrated Output Buffer & All Fixes)
+// 描述: DeiT 加速器顶层模块
+//       - 包含 Input/Weight Buffer 的握手连接
+//       - 包含 DMA 下降沿触发的 Bank Swap
+//       - 包含 Output Buffer (FIFO) 以平滑输出流
+//       - LATENCY_CFG 修正为 27
 // -----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -60,7 +62,7 @@ module deit_accelerator_top #(
 
     // Core Controls
     wire        core_weight_load_en;  // Phase 2: Array Load
-    wire        core_weight_dma_req;  // Phase 1: DMA Request [NEW]
+    wire        core_weight_dma_req;  // Phase 1: DMA Request
     wire        core_input_read_en;
     
     // Data Paths
@@ -69,6 +71,10 @@ module deit_accelerator_top #(
     wire [`ARRAY_COL*32-1:0] core_to_ppu_data;  
     wire [`ARRAY_COL*8-1:0]  ppu_to_obuf_data;  
     wire                     ppu_valid;
+
+    // Handshake Signals
+    wire                     wbuf_valid_out; // Weight Buffer Valid
+    wire                     ibuf_valid_out; // Input Buffer Valid
 
     // Reset
     wire sys_rst_n;
@@ -92,9 +98,7 @@ module deit_accelerator_top #(
         .o_ppu_zp(cfg_ppu_zp), .o_ppu_bias(cfg_ppu_bias), .o_output_en(cfg_output_en)
     );
 
-    // --- Demux Logic (Critical Fix) ---
-    // If Core requests DMA (Phase 1), route to Weight Buffer.
-    // Otherwise, route to Input Buffer.
+    // --- Demux Logic ---
     wire wbuf_in_valid = axis_in_tvalid & core_weight_dma_req;
     wire ibuf_in_valid = axis_in_tvalid & (!core_weight_dma_req);
     
@@ -102,61 +106,71 @@ module deit_accelerator_top #(
 
     // --- Swap Control Signals (Fixed with Reset) ---
     
-    // 1. Input Buffer Swap: Trigger on Start (Pre-load done)
+    // 1. Input Buffer Swap: Trigger on Start
     reg ctrl_ap_start_d;
     always @(posedge clk or negedge sys_rst_n) begin
-        if (!sys_rst_n) ctrl_ap_start_d <= 0; // [FIX] Add Reset
+        if (!sys_rst_n) ctrl_ap_start_d <= 0;
         else ctrl_ap_start_d <= ctrl_ap_start;
     end
     wire start_rising_edge = ctrl_ap_start & ~ctrl_ap_start_d;
 
-    // 捕获 DMA 结束的下降沿
-    reg dma_req_d;
+    // 2. Weight Buffer Swap: Trigger on DMA Done (Falling Edge of DMA Req)
+    reg core_weight_dma_req_d;
     always @(posedge clk or negedge sys_rst_n) begin
-        if (!sys_rst_n) dma_req_d <= 0; // [FIX] Add Reset
-        else dma_req_d <= core_weight_dma_req;
+        if (!sys_rst_n) core_weight_dma_req_d <= 0;
+        else core_weight_dma_req_d <= core_weight_dma_req;
     end
-    wire dma_done_pulse = ~core_weight_dma_req & dma_req_d;
-    wire weight_dat_valid,input_dat_valid;
+    wire weight_dma_done_pulse = ~core_weight_dma_req & core_weight_dma_req_d;
+
     // --- Buffers ---
     input_buffer_ctrl #(
         .DEPTH_LOG2(8) 
     ) u_input_buf (
-        .clk(clk), .rst_n(sys_rst_n),
-        .s_axis_tdata(axis_in_tdata), .s_axis_tvalid(ibuf_in_valid), .s_axis_tready(), .s_axis_tlast(axis_in_tlast),
-        .i_rd_en(core_input_read_en), .o_array_vec(ibuf_to_core_data),
-        .o_dat_valid(input_dat_valid),
-        .i_bank_swap(start_rising_edge) 
+        .clk            (clk), .rst_n(sys_rst_n),
+        .s_axis_tdata   (axis_in_tdata), 
+        .s_axis_tvalid  (ibuf_in_valid), 
+        .s_axis_tready  (), 
+        .s_axis_tlast   (axis_in_tlast),
+        .i_rd_en        (core_input_read_en), 
+        .o_array_vec    (ibuf_to_core_data),
+        .o_dat_valid    (ibuf_valid_out),    // [Connected]
+        .i_bank_swap    (start_rising_edge) 
     );
 
     weight_buffer_ctrl u_weight_buf (
-        .clk(clk), .rst_n(sys_rst_n),
-        .s_axis_tdata(axis_in_tdata), .s_axis_tvalid(wbuf_in_valid), .s_axis_tready(),
-        .i_weight_load_en(core_weight_load_en), .o_weight_vec(wbuf_to_core_data),
-        .o_dat_valid(weight_dat_valid),
-        .i_bank_swap(dma_done_pulse)
+        .clk            (clk), .rst_n(sys_rst_n),
+        .s_axis_tdata   (axis_in_tdata), 
+        .s_axis_tvalid  (wbuf_in_valid), 
+        .s_axis_tready  (),
+        .i_weight_load_en(core_weight_load_en), 
+        .o_weight_vec   (wbuf_to_core_data),
+        .o_dat_valid    (wbuf_valid_out),    // [Connected]
+        .i_bank_swap    (weight_dma_done_pulse)
     );
 
     // --- Core ---
     deit_core #(
-        .LATENCY_CFG(27),
+        .LATENCY_CFG(27), // [FIXED] 28 -> 27 to align wr_en with data
         .ADDR_WIDTH(8)
     ) u_core (
-        .clk(clk), .rst_n(sys_rst_n),
-        .ap_start(ctrl_ap_start),
-        .cfg_compute_cycles(cfg_seq_len), .cfg_acc_mode(cfg_acc_mode),
-        .ap_done(core_ap_done), .ap_idle(core_ap_idle),
-        .in_act_vec(ibuf_to_core_data), .in_weight_vec(wbuf_to_core_data),
-        .out_acc_vec(core_to_ppu_data),
-        .ctrl_weight_load_en(core_weight_load_en),
-        .ctrl_weight_dma_req(core_weight_dma_req), // [NEW] Connected
-        .ctrl_input_stream_en(core_input_read_en),
-        .i_weight_valid(weight_dat_valid),
-        .i_input_valid(input_dat_valid),
+        .clk                    (clk), .rst_n(sys_rst_n),
+        .ap_start               (ctrl_ap_start),
+        .cfg_compute_cycles     (cfg_seq_len), .cfg_acc_mode(cfg_acc_mode),
+        .ap_done                (core_ap_done), .ap_idle(core_ap_idle),
+        .in_act_vec             (ibuf_to_core_data), 
+        .in_weight_vec          (wbuf_to_core_data),
+        .i_input_valid          (ibuf_valid_out), // [Connected]
+        .i_weight_valid         (wbuf_valid_out), // [Connected]
+        .out_acc_vec            (core_to_ppu_data),
+        .ctrl_weight_load_en    (core_weight_load_en),
+        .ctrl_weight_dma_req    (core_weight_dma_req), 
+        .ctrl_input_stream_en   (core_input_read_en),
         .dbg_acc_wr_en(), .dbg_acc_addr(), .dbg_aligned_col0(), .dbg_aligned_col15(), .dbg_raw_col0()
     );
 
     // --- PPU ---
+    // [FIXED] 使用 Write-Through 后的 acc_wr_en 驱动 PPU
+    // single_column_bank 已经修改为 Write-Through，所以 wr_en 时数据即有效
     wire core_valid_raw = u_core.dbg_acc_wr_en; 
     wire ppu_input_valid = core_valid_raw & cfg_output_en; 
 
@@ -167,44 +181,22 @@ module deit_accelerator_top #(
         .cfg_mult(cfg_ppu_mult), .cfg_shift(cfg_ppu_shift), .cfg_zp(cfg_ppu_zp), .cfg_bias(cfg_ppu_bias)
     );
 
-    // --- Output Gearbox (128 -> 64) ---
-    reg [1:0]  out_state;
-    reg [127:0] ppu_out_latched;
-    reg [63:0]  axis_tdata_reg;
-    reg         axis_tvalid_reg;
-    reg         axis_tlast_reg;
-
-    always @(posedge clk or negedge sys_rst_n) begin
-        if (!sys_rst_n) begin
-            out_state <= 0;
-            axis_tvalid_reg <= 0;
-            axis_tdata_reg <= 0;
-            axis_tlast_reg <= 0;
-        end else begin
-            case (out_state)
-                0: begin
-                    if (ppu_valid) begin
-                        ppu_out_latched <= ppu_to_obuf_data;
-                        axis_tdata_reg  <= ppu_to_obuf_data[63:0];
-                        axis_tvalid_reg <= 1;
-                        axis_tlast_reg  <= 0;
-                        out_state <= 1;
-                    end else begin
-                        axis_tvalid_reg <= 0;
-                    end
-                end
-                1: begin
-                    axis_tdata_reg  <= ppu_out_latched[127:64];
-                    axis_tvalid_reg <= 1;
-                    axis_tlast_reg  <= 0; 
-                    out_state <= 0;
-                end
-            endcase
-        end
-    end
-
-    assign axis_out_tdata  = axis_tdata_reg;
-    assign axis_out_tvalid = axis_tvalid_reg;
-    assign axis_out_tlast  = axis_tlast_reg;
+    // --- Output Buffer (FIFO + Gearbox) [NEW] ---
+    // 替换了原来脆弱的 reg 状态机
+    output_buffer_ctrl #(
+        .DEPTH_LOG2(8) // 256 Depth for Safety
+    ) u_out_buf (
+        .clk            (clk),
+        .rst_n          (sys_rst_n),
+        // From PPU
+        .i_data         (ppu_to_obuf_data),
+        .i_valid        (ppu_valid),
+        .o_full         (), // Optional debug
+        // To AXI-Stream
+        .axis_tdata     (axis_out_tdata),
+        .axis_tvalid    (axis_out_tvalid),
+        .axis_tready    (axis_out_tready),
+        .axis_tlast     (axis_out_tlast)
+    );
 
 endmodule
