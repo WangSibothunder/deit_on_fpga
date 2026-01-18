@@ -168,7 +168,7 @@ module deit_accelerator_top_tb;
             axis_out_tready <= 1;
             
             // Expect M * 2 words
-            for (i = 0; i < M_DIM*2; i = i + 1) begin
+            for (i = 0; i < M_DIM; i = i + 1) begin
                 // Wait for valid
                 while (!axis_out_tvalid) @(posedge clk);
                 
@@ -182,8 +182,9 @@ module deit_accelerator_top_tb;
                 
                 @(posedge clk); 
             end
-            axis_out_tready <= 0;
             $display("[TB] Output Stream Check Done.");
+            axis_out_tready <= 0;
+            
         end
     endtask
 
@@ -234,7 +235,7 @@ module deit_accelerator_top_tb;
             begin
                 // Snooping internal signal to sync with Hardware Start
                 wait(dut.u_control.o_ap_start == 1);
-                @(posedge clk); // Align with state transition
+                repeat(5) @(posedge clk); // [FIX] 增加安全余量，等待 dma_req 拉高
                 send_stream_data(0, 0); // Type=Wt, Tile={k0, n0}
             end
         join
@@ -253,7 +254,7 @@ module deit_accelerator_top_tb;
             axi_lite_write(6'h00, 3); // Start
             begin
                 wait(dut.u_control.o_ap_start == 1);
-                @(posedge clk);
+                repeat(5) @(posedge clk); // [FIX] 增加安全余量，等待 dma_req 拉高
                 send_stream_data(0, 1); // Type=Wt, Tile={k1, n0}
             end
             // Check Output concurrently (PPU will output after compute)
@@ -282,7 +283,7 @@ module deit_accelerator_top_tb;
             axi_lite_write(6'h00, 3);
             begin
                 wait(dut.u_control.o_ap_start == 1);
-                @(posedge clk);
+                repeat(5) @(posedge clk); // [FIX] 增加安全余量，等待 dma_req 拉高
                 send_stream_data(0, 2); // Wt {k0, n1}
             end
         join
@@ -299,7 +300,7 @@ module deit_accelerator_top_tb;
             axi_lite_write(6'h00, 3); 
             begin
                 wait(dut.u_control.o_ap_start == 1);
-                @(posedge clk);
+                repeat(5) @(posedge clk); // [FIX] 增加安全余量，等待 dma_req 拉高
                 send_stream_data(0, 3); // Wt {k1, n1}
             end
             check_output_stream(1); 

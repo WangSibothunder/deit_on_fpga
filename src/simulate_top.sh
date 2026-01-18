@@ -8,6 +8,11 @@ MODULE="deit_accelerator_top"
 TB_MODULE="${MODULE}_tb"
 SIM_OUT="src/${MODULE}_sim.out"
 VCD_FILE="top_verify.vcd"
+# 在Git Bash中初始化conda
+eval "$(G:/anaconda/Scripts/conda.exe 'shell.bash' 'hook')"
+
+# 激活pytorch环境
+conda activate pytorch
 
 # 1. Generate Vectors
 echo "[1/3] Generating System Vectors..."

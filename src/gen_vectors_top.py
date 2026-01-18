@@ -56,9 +56,12 @@ def generate_system_vectors():
     # 1. 生成源数据
     mat_a = np.random.randint(-10, 10, size=(M_DIM, K_DIM), dtype=np.int8)
     mat_b = np.random.randint(-10, 10, size=(K_DIM, N_DIM), dtype=np.int8)
-
+    
     # 2. 计算理想结果 (INT32)
     mat_c_int32 = np.matmul(mat_a.astype(np.int32), mat_b.astype(np.int32))
+
+    # 初始化累加器状态矩阵
+    accumulator_state = np.zeros_like(mat_c_int32, dtype=np.int32)
 
     # 3. 计算 PPU 后结果 (INT8) - Golden Output
     mat_c_int8 = np.zeros_like(mat_c_int32, dtype=np.int8)
@@ -69,6 +72,75 @@ def generate_system_vectors():
     # 4. 生成数据流文件 (Tiling)
     num_k_tiles = K_DIM // ARRAY_ROW # 2
     num_n_tiles = N_DIM // ARRAY_COL # 2
+
+    # --- 保存分块中间乘法结果 ---
+    # 计算并保存4个mat_a子矩阵和4个mat_b子矩阵的分块中间乘法结果
+    print("  保存分块中间乘法结果...")
+    for k_idx in range(num_k_tiles):
+        for n_idx in range(num_n_tiles):
+            # 提取对应的子矩阵
+            a_sub = mat_a[:, k_idx * ARRAY_ROW : (k_idx + 1) * ARRAY_ROW]  # M x ARRAY_ROW (32 x 12)
+            b_sub = mat_b[k_idx * ARRAY_ROW : (k_idx + 1) * ARRAY_ROW, n_idx * ARRAY_COL : (n_idx + 1) * ARRAY_COL]  # ARRAY_ROW x ARRAY_COL (12 x 16)
+            
+            # 保存 mat_a 子矩阵 (参考 systolic_array 格式)
+            # 每一行包含该时刻喂给12行的Input，位宽: ARRAY_ROW * 8 = 96 bits
+            filename_a = f"{OUT_DIR}/input_k{k_idx}_n{n_idx}.mem"
+            with open(filename_a, "w") as f:
+                for t in range(M_DIM):  # 遍历M维度的所有行
+                    hex_str = ""
+                    for r in range(ARRAY_ROW - 1, -1, -1):  # 逆序: 11...0
+                        hex_str += to_hex(a_sub[t, r], 8)
+                    f.write(f"{hex_str}\n")
+            
+            # 保存 mat_b 子矩阵 (参考 systolic_array 格式)
+            # 每一行包含该Row加载进来的16个Column的权重，位宽: ARRAY_COL * 8 = 128 bits
+            filename_b = f"{OUT_DIR}/weight_k{k_idx}_n{n_idx}.mem"
+            with open(filename_b, "w") as f:
+                for r in range(ARRAY_ROW):
+                    hex_str = ""
+                    for c in range(ARRAY_COL - 1, -1, -1):  # 逆序: 15...0
+                        hex_str += to_hex(b_sub[r, c], 8)
+                    f.write(f"{hex_str}\n")
+            
+            # 计算中间乘法结果 (INT32)
+            intermediate_result = np.matmul(a_sub.astype(np.int32), b_sub.astype(np.int32))  # M x ARRAY_COL (32 x 16)
+            
+            # 保存中间乘法结果到文件 (参考 systolic_array 格式)
+            # 每一行包含T时刻流出的16个Column的结果，位宽: ARRAY_COL * 32 = 512 bits
+            inter_filename = f"{OUT_DIR}/acc_golden_k{k_idx}_n{n_idx}.mem"
+            with open(inter_filename, "w") as f:
+                for t in range(M_DIM):
+                    hex_str = ""
+                    for c in range(ARRAY_COL - 1, -1, -1):  # 逆序: 15...0
+                        hex_str += to_hex(int(intermediate_result[t, c]), 32)
+                    f.write(f"{hex_str}\n")
+            print(f"  [ACC] 中间乘法结果文件: {inter_filename}")
+            
+            # --- CHECK 2: Accumulator Memory Content (Accumulated Sum) ---
+            
+            # 这是硬件写回 RAM 后的值 (历史值 + 当前值)
+            
+            # 更新模拟累加器状态
+            c_start = n_idx * ARRAY_COL
+            c_end   = (n_idx + 1) * ARRAY_COL
+            
+            # 累加到全局状态中
+            # 获取当前子矩阵的起始行
+            r_start = k_idx * ARRAY_ROW
+            # 将中间结果累加到对应的区域
+            accumulator_state[:, c_start:c_end] += intermediate_result
+            
+            # 保存累加后的值 (用于检查 RAM)
+            final_acc_filename = f"{OUT_DIR}/ram_golden_k{k_idx}_n{n_idx}.mem"
+            with open(final_acc_filename, "w") as f:
+                for t in range(M_DIM):
+                    hex_str = ""
+                    for c in range(ARRAY_COL - 1, -1, -1):
+                        # 从全局累加器中取值
+                        val = accumulator_state[t, c_start + c]
+                        hex_str += to_hex(int(val), 32)
+                    f.write(f"{hex_str}\n")
+            print(f"  [DEBUG] RAM Golden值 (K={k_idx}): {final_acc_filename}")
 
     # --- A: Input Stream Files (A 矩阵) ---
     # 硬件 Input Buffer 需要 64-bit 宽度的流。

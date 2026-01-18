@@ -24,6 +24,10 @@ module deit_core #(
     // --- Data Streams ---
     input  wire [`ARRAY_ROW*`DATA_WIDTH-1:0]  in_act_vec,
     input  wire [`ARRAY_COL*`DATA_WIDTH-1:0]  in_weight_vec,
+    // [ADD] 新增握手信号端口
+    input  wire                               i_weight_valid, // 来自 Weight Buffer
+    input  wire                               i_input_valid,  // 来自 Input Buffer (用于 Input Latency 对齐)
+    
     output wire [`ARRAY_COL*`ACC_WIDTH-1:0]   out_acc_vec,
     
     // --- Buffer Controls ---
@@ -55,27 +59,56 @@ module deit_core #(
         .ap_idle                (ap_idle),
         .current_state_dbg      (),
         .ctrl_weight_dma_req    (ctrl_weight_dma_req), // [NEW]
+        .i_weight_valid (i_weight_valid), // 连接到 Controller
+        .i_input_valid          (i_input_valid),    // [Connect if available]
         .ctrl_weight_load_en    (ctrl_weight_load_en),
         .ctrl_input_stream_en   (ctrl_input_stream_en),
         .ctrl_drain_en          (ctrl_drain_en_unused)
     );
 
     // =========================================================================
-    // 2. Input Row Load Logic
+    // [CRITICAL FIX] 2. Weight Loading Pipeline Alignment
+    // =========================================================================
+    // 问题根源: row_load_en 是寄存器输出，比 input data 晚一拍。
+    // 解决方案: 在 Core 入口对 数据、Valid、Enable 全部打一拍，实现时序对齐。
+    
+    reg [`ARRAY_COL*`DATA_WIDTH-1:0] in_weight_vec_d;
+    reg                              i_weight_valid_d;
+    reg                              ctrl_weight_load_en_d;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            in_weight_vec_d       <= 0;
+            i_weight_valid_d      <= 0;
+            ctrl_weight_load_en_d <= 0;
+        end else begin
+            in_weight_vec_d       <= in_weight_vec;
+            i_weight_valid_d      <= i_weight_valid;
+            ctrl_weight_load_en_d <= ctrl_weight_load_en;
+        end
+    end
+
+    // =========================================================================
+    // 3. Input Row Load Logic (Using Delayed Signals)
     // =========================================================================
     reg [`ARRAY_ROW-1:0] row_load_en;
+    
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) row_load_en <= 0;
         else begin
+            // [FIX] 使用延迟后的总开关 (_d)，确保最后一行加载时不被提前复位
             if (ctrl_weight_load_en) begin
-                if (row_load_en == 0) row_load_en <= 1;
-                else row_load_en <= (row_load_en << 1);
+                // [FIX] 使用延迟后的 Valid (_d)，与延迟后的数据对齐
+                if (i_weight_valid) begin
+                    if (row_load_en == 0) row_load_en <= 1;
+                    else row_load_en <= (row_load_en << 1);
+                end
+                // Hold logic implicit
             end else begin
                 row_load_en <= 0;
             end
         end
     end
-
     // =========================================================================
     // 3. Input Skew
     // =========================================================================
@@ -106,14 +139,13 @@ module deit_core #(
     // =========================================================================
     wire [`ARRAY_COL*`ACC_WIDTH-1:0] array_raw_out;
     wire safe_compute_en = 1'b1; 
-
     systolic_array u_array (
         .clk            (clk),
         .rst_n          (rst_n),
         .en_compute     (safe_compute_en), 
         .row_load_en    (row_load_en),
         .in_act_vec     (skewed_in_act_vec),
-        .in_weight_vec  (in_weight_vec),
+        .in_weight_vec  (in_weight_vec_d),
         .out_psum_vec   (array_raw_out)
     );
 
@@ -147,14 +179,22 @@ module deit_core #(
     endgenerate
 
     // =========================================================================
-    // 6. Latency Compensation (Valid Line)
+    // 6. Latency Compensation (Valid Line - FIXED)
     // =========================================================================
     reg [LATENCY_CFG-1:0] valid_delay_line;
+    
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) valid_delay_line <= 0;
-        else valid_delay_line <= {valid_delay_line[LATENCY_CFG-2:0], ctrl_input_stream_en};
+        else begin
+            // [CRITICAL FIX]
+            // 不要只移入请求信号 (Request)，要移入 (Request & Valid)
+            // 只有当 Input Buffer 真的吐出有效数据时，我们才往 Delay Line 里打入 '1'
+            // 这样累加器的写使能 (acc_wr_en) 就会自动延后，与数据流完美对齐
+            valid_delay_line <= {valid_delay_line[LATENCY_CFG-2:0], (ctrl_input_stream_en & i_input_valid)};
+        end
     end
-    wire acc_wr_en = valid_delay_line[LATENCY_CFG-1]; 
+    
+    wire acc_wr_en = valid_delay_line[LATENCY_CFG-1];
 
     // =========================================================================
     // 7. Accumulator Bank Control (UPDATED)
@@ -168,7 +208,7 @@ module deit_core #(
         end else begin
             if (acc_wr_en) begin
                 acc_addr <= acc_addr + 1;
-            end else if (ap_idle) begin
+            end else  begin
                 acc_addr <= 0; 
             end
         end

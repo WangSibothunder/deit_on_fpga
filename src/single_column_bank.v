@@ -33,35 +33,45 @@ module single_column_bank #(
     // 对于 Depth=256, Width=32, 总共 8Kb。通常还是会用 LUTRAM，或者 0.5 个 BRAM。
     (* ram_style = "distributed" *) 
     reg [`ACC_WIDTH-1:0] mem [0:(1<<DEPTH_LOG2)-1];
-
     // -------------------------------------------------------------------------
-    // Asynchronous Read (组合逻辑读)
+    // 2. Read-Modify-Write Logic
     // -------------------------------------------------------------------------
-    assign out_acc = mem[addr];
-
-    // -------------------------------------------------------------------------
-    // Accumulate / Overwrite Logic
-    // -------------------------------------------------------------------------
-    wire [`ACC_WIDTH-1:0] old_val;
-    wire [`ACC_WIDTH-1:0] sum_val;
-    wire [`ACC_WIDTH-1:0] write_val;
-
-    assign old_val = out_acc;
     
-    // Signed Addition
-    assign sum_val = $signed(old_val) + $signed(in_psum);
-    
-    // Mux for mode
-    assign write_val = (acc_mode) ? sum_val : in_psum;
+    // Step A: Read Old Value (Asynchronous read)
+    wire signed [`ACC_WIDTH-1:0] old_val = mem[addr];
 
-    // -------------------------------------------------------------------------
-    // Synchronous Write
-    // -------------------------------------------------------------------------
-    always @(posedge clk) begin
-        if (wr_en) begin
-            mem[addr] <= write_val;
+    // Step B: Calculate New Value
+    reg signed [`ACC_WIDTH-1:0] next_val;
+    
+    always @(*) begin
+        if (acc_mode) begin
+            // Accumulate Mode: Old + New
+            next_val = old_val + in_psum;
+        end else begin
+            // Overwrite Mode: New only (First Tile)
+            next_val = in_psum;
         end
     end
+
+    // Step C: Write Back (Synchronous)
+    always @(posedge clk) begin
+        if (wr_en) begin
+            mem[addr] <= next_val;
+        end
+    end
+
+    // -------------------------------------------------------------------------
+    // 3. Output Logic with Bypass (CRITICAL FIX)
+    // -------------------------------------------------------------------------
+    // Old Logic: assign out_acc = mem[addr]; 
+    // Bug: When wr_en is high, mem[addr] is OLD value until next clock. 
+    // PPU captures OLD value.
+    
+    // New Logic: Write-Through / Bypass
+    // If writing, output the calculated 'next_val' immediately.
+    // If reading (idle), output 'mem[addr]'.
+    
+    assign out_acc = (wr_en) ? next_val : old_val;
 
     // Init for simulation
     integer i;

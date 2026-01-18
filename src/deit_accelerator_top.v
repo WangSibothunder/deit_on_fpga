@@ -117,7 +117,7 @@ module deit_accelerator_top #(
         else dma_req_d <= core_weight_dma_req;
     end
     wire dma_done_pulse = ~core_weight_dma_req & dma_req_d;
-
+    wire weight_dat_valid,input_dat_valid;
     // --- Buffers ---
     input_buffer_ctrl #(
         .DEPTH_LOG2(8) 
@@ -125,6 +125,7 @@ module deit_accelerator_top #(
         .clk(clk), .rst_n(sys_rst_n),
         .s_axis_tdata(axis_in_tdata), .s_axis_tvalid(ibuf_in_valid), .s_axis_tready(), .s_axis_tlast(axis_in_tlast),
         .i_rd_en(core_input_read_en), .o_array_vec(ibuf_to_core_data),
+        .o_dat_valid(input_dat_valid),
         .i_bank_swap(start_rising_edge) 
     );
 
@@ -132,12 +133,13 @@ module deit_accelerator_top #(
         .clk(clk), .rst_n(sys_rst_n),
         .s_axis_tdata(axis_in_tdata), .s_axis_tvalid(wbuf_in_valid), .s_axis_tready(),
         .i_weight_load_en(core_weight_load_en), .o_weight_vec(wbuf_to_core_data),
+        .o_dat_valid(weight_dat_valid),
         .i_bank_swap(dma_done_pulse)
     );
 
     // --- Core ---
     deit_core #(
-        .LATENCY_CFG(28),
+        .LATENCY_CFG(27),
         .ADDR_WIDTH(8)
     ) u_core (
         .clk(clk), .rst_n(sys_rst_n),
@@ -149,6 +151,8 @@ module deit_accelerator_top #(
         .ctrl_weight_load_en(core_weight_load_en),
         .ctrl_weight_dma_req(core_weight_dma_req), // [NEW] Connected
         .ctrl_input_stream_en(core_input_read_en),
+        .i_weight_valid(weight_dat_valid),
+        .i_input_valid(input_dat_valid),
         .dbg_acc_wr_en(), .dbg_acc_addr(), .dbg_aligned_col0(), .dbg_aligned_col15(), .dbg_raw_col0()
     );
 
