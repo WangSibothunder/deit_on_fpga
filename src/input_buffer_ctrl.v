@@ -156,14 +156,17 @@ module input_buffer_ctrl #(
     // -------------------------------------------------------------------------
     // Input Buffer Gearbox adds latency? 
     // Even if pre-loaded, using a consistent handshake ensures alignment.
-    reg [1:0] valid_sr;
+    reg valid_sr;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             valid_sr <= 0;
             o_dat_valid <= 0;
+        end else if (i_bank_swap) begin
+            valid_sr <= 0;
+            o_dat_valid <= 0;
         end else begin
-            valid_sr <= {valid_sr[0], i_rd_en};
-            o_dat_valid <= valid_sr[1]; 
+            valid_sr <= i_rd_en;
+            o_dat_valid <= valid_sr;
         end
     end
 

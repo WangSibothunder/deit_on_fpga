@@ -1,0 +1,216 @@
+14025@Thunder MINGW64 /l/AI/deit_on_fpga (main)
+$ ./src/simulate_top.sh
+[1/3] Generating System Vectors...
+=== Generating Top-Level Vectors ===
+Matrix: [37x23] * [23x19] -> PPU -> INT8
+Pad: M=38 K=24 N=32
+Tiles: K=2 N=2
+[AXI-Stream] Input: src/test_data_top/axis_input.mem
+[AXI-Stream] Weight: src/test_data_top/axis_weight.mem
+[AXI-Stream] Golden: src/test_data_top/axis_golden.mem
+[CKPT-B] RAM Golden (col0/1): src/test_data_top/ram_golden_c01.mem
+[2/3] Compiling RTL & Testbench...
+src/output_buffer_ctrl.v:158: warning: @* found no sensitivities so it will never trigger.
+[3/3] Running Simulation...
+WARNING: src/deit_accelerator_top_tb.v:97: $readmemh(src/test_data_top/axis_input.mem): Not enough words in the file for the requested range [0:9999].
+WARNING: src/deit_accelerator_top_tb.v:98: $readmemh(src/test_data_top/axis_weight.mem): Not enough words in the file for the requested range [0:9999].
+WARNING: src/deit_accelerator_top_tb.v:99: $readmemh(src/test_data_top/axis_golden.mem): Not enough words in the file for the requested range [0:9999].
+WARNING: src/deit_accelerator_top_tb.v:100: $readmemh(src/test_data_top/ram_golden_c01.mem): Not enough words in the file for the requested range [0:49999].
+[CFG] M=37 K=23 N=19
+[CFG] M_PAD=38 K_PAD=24 N_PAD=32
+[CFG] K_TILES=2 N_TILES=2
+[CFG] INPUT_WORDS_PER_TILE=57
+[CFG] OUTPUT_WORDS_PER_TILE=76
+VCD info: dumpfile top_verify.vcd opened for output.
+=== START SYSTEM TOP VERIFICATION ===
+
+[TILE] === N=0 ===
+[TILE] -> K=0
+[CKPT-A][     AFTER_START] n=0 k=0 state=1 cnt_load=25 cnt_seq=0 cnt_drain=0 wv=0 iv=0 dma_req=1
+[CKPT-A][      AFTER_DONE] n=0 k=0 state=0 cnt_load=39 cnt_seq=38 cnt_drain=27 wv=0 iv=0 dma_req=0
+[CKPT-B][PASS] n=0 k=0 addr=0 val=0000001effffff79
+[CKPT-B][PASS] n=0 k=0 addr=1 val=000000f7ffffff73
+[CKPT-B][PASS] n=0 k=0 addr=2 val=0000003f0000009c
+[CKPT-B][PASS] n=0 k=0 addr=3 val=000000ea0000008f
+[TILE] -> K=1
+[CKPT-A][     AFTER_START] n=0 k=1 state=1 cnt_load=25 cnt_seq=0 cnt_drain=0 wv=0 iv=0 dma_req=1
+[CKPT-A][      AFTER_DONE] n=0 k=1 state=0 cnt_load=39 cnt_seq=38 cnt_drain=27 wv=0 iv=0 dma_req=0
+[CKPT-B][PASS] n=0 k=1 addr=0 val=0000003700000028
+[CKPT-B][PASS] n=0 k=1 addr=1 val=00000106ffffffd0
+[CKPT-B][PASS] n=0 k=1 addr=2 val=ffffff7d00000049
+[CKPT-B][PASS] n=0 k=1 addr=3 val=00000150000000e7
+[CKPT-C] Checking output stream for N tile 0
+[PASS] OUT n=0 word=0 val=467f7fbab37f766c
+[FAIL] OUT n=0 word=1 exp=bf7f7f7f4e7f0a7f got=467f7fbab37f766c
+[FAIL] OUT n=0 word=2 exp=c77f7fd8807f7f2e got=467f7fbab37f766c
+[FAIL] OUT n=0 word=3 exp=28457f7f7f7fa77f got=bf7f7f7f4e7f0a7f
+[FAIL] OUT n=0 word=4 exp=75ff7f9bfe21f47f got=c77f7fd8807f7f2e
+[FAIL] OUT n=0 word=5 exp=2a4b7f7f327f7fc1 got=28457f7f7f7fa77f
+[FAIL] OUT n=0 word=6 exp=7f21ced29c7f7f7f got=75ff7f9bfe21f47f
+[FAIL] OUT n=0 word=7 exp=467f7f7ffc21407f got=2a4b7f7f327f7fc1
+[FAIL] OUT n=0 word=8 exp=7fe27f5f157fb87f got=7f21ced29c7f7f7f
+[FAIL] OUT n=0 word=9 exp=cd7f0a7fd57f7fdf got=467f7f7ffc21407f
+[FAIL] OUT n=0 word=10 exp=537f7f06c979e8b2 got=7fe27f5f157fb87f
+[FAIL] OUT n=0 word=11 exp=7f0c7f4a2d7f7f7f got=cd7f0a7fd57f7fdf
+[FAIL] OUT n=0 word=12 exp=5d7f147f7fb47f7f got=537f7f06c979e8b2
+[FAIL] OUT n=0 word=13 exp=507f8d7f7f133212 got=7f0c7f4a2d7f7f7f
+[FAIL] OUT n=0 word=14 exp=b262420ebf7f7fb4 got=5d7f147f7fb47f7f
+[FAIL] OUT n=0 word=15 exp=79f27f5862347f6e got=507f8d7f7f133212
+[FAIL] OUT n=0 word=16 exp=a77f7b1be42d6073 got=b262420ebf7f7fb4
+[FAIL] OUT n=0 word=17 exp=3d2b027f7f7ffb68 got=79f27f5862347f6e
+[FAIL] OUT n=0 word=18 exp=fb7f7f7fd5347f7f got=a77f7b1be42d6073
+[FAIL] OUT n=0 word=19 exp=b77f1f7f7f7fec66 got=3d2b027f7f7ffb68
+[FAIL] OUT n=0 word=20 exp=ae222c59477f7f34 got=fb7f7f7fd5347f7f
+[FAIL] OUT n=0 word=21 exp=bb0e7f497f42ae78 got=b77f1f7f7f7fec66
+[FAIL] OUT n=0 word=22 exp=7f4e1d376a7fb15d got=ae222c59477f7f34
+[FAIL] OUT n=0 word=23 exp=d9296d78d1f67f7f got=bb0e7f497f42ae78
+[FAIL] OUT n=0 word=24 exp=7f7f3144247f7f7f got=7f4e1d376a7fb15d
+[FAIL] OUT n=0 word=25 exp=7f7f327f7fe7fb7f got=d9296d78d1f67f7f
+[FAIL] OUT n=0 word=26 exp=ad53cb267f377433 got=7f7f3144247f7f7f
+[FAIL] OUT n=0 word=27 exp=74f4a7f415ed5256 got=7f7f327f7fe7fb7f
+[FAIL] OUT n=0 word=28 exp=7f807f77317f1b7f got=ad53cb267f377433
+[FAIL] OUT n=0 word=29 exp=357f7f7feb557f0a got=74f4a7f415ed5256
+[FAIL] OUT n=0 word=30 exp=a60e7f767fdfb8c1 got=7f807f77317f1b7f
+[FAIL] OUT n=0 word=31 exp=477f518021a77f80 got=357f7f7feb557f0a
+[FAIL] OUT n=0 word=32 exp=7ff97fb6da7f800e got=a60e7f767fdfb8c1
+[FAIL] OUT n=0 word=33 exp=8cf47f40b77f7f7f got=477f518021a77f80
+[FAIL] OUT n=0 word=34 exp=7f55647f7f7f5879 got=7ff97fb6da7f800e
+[FAIL] OUT n=0 word=35 exp=4c7f7f1c727f0c71 got=8cf47f40b77f7f7f
+[FAIL] OUT n=0 word=36 exp=e57f137f7f117f30 got=7f55647f7f7f5879
+[FAIL] OUT n=0 word=37 exp=43047f6d7f52807f got=4c7f7f1c727f0c71
+[FAIL] OUT n=0 word=38 exp=0b7f6a2fd87f397f got=e57f137f7f117f30
+[FAIL] OUT n=0 word=39 exp=147f187f7f7fce7f got=43047f6d7f52807f
+[FAIL] OUT n=0 word=40 exp=7f7f7fedfd7fe150 got=0b7f6a2fd87f397f
+[FAIL] OUT n=0 word=41 exp=5d7f7f7f3a337f7f got=147f187f7f7fce7f
+[FAIL] OUT n=0 word=42 exp=507ffd7f397f39a4 got=7f7f7fedfd7fe150
+[FAIL] OUT n=0 word=43 exp=54057f687f7f7f7f got=5d7f7f7f3a337f7f
+[FAIL] OUT n=0 word=44 exp=4d7f5a217f53212c got=507ffd7f397f39a4
+[FAIL] OUT n=0 word=45 exp=0f427feec04ee5ad got=54057f687f7f7f7f
+[FAIL] OUT n=0 word=46 exp=803b7f7f077f280e got=4d7f5a217f53212c
+[FAIL] OUT n=0 word=47 exp=c1247f7f7f7f83e6 got=0f427feec04ee5ad
+[FAIL] OUT n=0 word=48 exp=3a7f7f7fdd617f7f got=803b7f7f077f280e
+[FAIL] OUT n=0 word=49 exp=80457f7f7f7f68ec got=c1247f7f7f7f83e6
+[FAIL] OUT n=0 word=50 exp=807f0b5cc87f7f28 got=3a7f7f7fdd617f7f
+[FAIL] OUT n=0 word=51 exp=7f7f597f7f7f827f got=80457f7f7f7f68ec
+[FAIL] OUT n=0 word=52 exp=3b767f2ffe0a7f7f got=807f0b5cc87f7f28
+[FAIL] OUT n=0 word=53 exp=7f7edc7f557f7f5a got=7f7f597f7f7f827f
+[FAIL] OUT n=0 word=54 exp=807f7f43d2807f0c got=3b767f2ffe0a7f7f
+[FAIL] OUT n=0 word=55 exp=c880497f7f542180 got=7f7edc7f557f7f5a
+[FAIL] OUT n=0 word=56 exp=633409c17f7f4ec0 got=807f7f43d2807f0c
+[FAIL] OUT n=0 word=57 exp=7f7f74ca80807f7b got=c880497f7f542180
+[FAIL] OUT n=0 word=58 exp=c97f7faa94617f7f got=633409c17f7f4ec0
+[FAIL] OUT n=0 word=59 exp=3b6f7b7f6f7f4a7f got=7f7f74ca80807f7b
+[FAIL] OUT n=0 word=60 exp=807f7f7f13053b66 got=c97f7faa94617f7f
+[FAIL] OUT n=0 word=61 exp=6aeec97f7f7fdf28 got=3b6f7b7f6f7f4a7f
+[FAIL] OUT n=0 word=62 exp=ca7f7fbe9af80d62 got=807f7f7f13053b66
+[FAIL] OUT n=0 word=63 exp=dae77f7f7f7f6a5f got=6aeec97f7f7fdf28
+[FAIL] OUT n=0 word=64 exp=7f7f0addb47f7f7f got=ca7f7fbe9af80d62
+[FAIL] OUT n=0 word=65 exp=807f7f7f747fbe7f got=dae77f7f7f7f6a5f
+[FAIL] OUT n=0 word=66 exp=18341a7f70a87f7f got=7f7f0addb47f7f7f
+[FAIL] OUT n=0 word=67 exp=7f287f7f7ff4d508 got=807f7f7f747fbe7f
+[FAIL] OUT n=0 word=68 exp=181f66514c267f7f got=18341a7f70a87f7f
+[FAIL] OUT n=0 word=69 exp=0058587f7f7f1c5c got=7f287f7f7ff4d508
+[FAIL] OUT n=0 word=70 exp=7f586109217ffe7f got=181f66514c267f7f
+[FAIL] OUT n=0 word=71 exp=d97f7f7ea67f7f18 got=0058587f7f7f1c5c
+[FAIL] OUT n=0 word=72 exp=5db6797f7f7b31fe got=7f586109217ffe7f
+[FAIL] OUT n=0 word=73 exp=5f1d2526cad67fe7 got=d97f7f7ea67f7f18
+[FAIL] OUT n=0 word=74 exp=5050505050505050 got=5db6797f7f7b31fe
+[FAIL] OUT n=0 word=75 exp=5050505050505050 got=5f1d2526cad67fe7
+
+[TILE] === N=1 ===
+[TILE] -> K=0
+[CKPT-A][     AFTER_START] n=1 k=0 state=1 cnt_load=25 cnt_seq=0 cnt_drain=0 wv=0 iv=0 dma_req=1
+[CKPT-A][      AFTER_DONE] n=1 k=0 state=0 cnt_load=39 cnt_seq=38 cnt_drain=27 wv=0 iv=0 dma_req=0
+[CKPT-B][PASS] n=1 k=0 addr=0 val=ffffff9500000042
+[CKPT-B][PASS] n=1 k=0 addr=1 val=0000000affffff0e
+[CKPT-B][PASS] n=1 k=0 addr=2 val=ffffff4b00000070
+[CKPT-B][PASS] n=1 k=0 addr=3 val=ffffffbaffffff36
+[TILE] -> K=1
+[CKPT-A][     AFTER_START] n=1 k=1 state=1 cnt_load=25 cnt_seq=0 cnt_drain=0 wv=0 iv=0 dma_req=1
+[CKPT-A][      AFTER_DONE] n=1 k=1 state=0 cnt_load=39 cnt_seq=38 cnt_drain=27 wv=0 iv=0 dma_req=0
+[CKPT-B][PASS] n=1 k=1 addr=0 val=000000200000009d
+[CKPT-B][PASS] n=1 k=1 addr=1 val=00000073fffffef5
+[CKPT-B][PASS] n=1 k=1 addr=2 val=fffffefe0000006c
+[CKPT-B][PASS] n=1 k=1 addr=3 val=ffffff810000009b
+[CKPT-C] Checking output stream for N tile 1
+[FAIL] OUT n=1 word=0 exp=5050505050ad667f got=5050505050505050
+[PASS] OUT n=1 word=1 val=5050505050505050
+[FAIL] OUT n=1 word=2 exp=5050505050497f94 got=5050505050505050
+[PASS] OUT n=1 word=3 val=5050505050505050
+[FAIL] OUT n=1 word=4 exp=5050505050329a7f got=5050505050ad667f
+[PASS] OUT n=1 word=5 val=5050505050505050
+[FAIL] OUT n=1 word=6 exp=5050505050bbf77f got=5050505050497f94
+[PASS] OUT n=1 word=7 val=5050505050505050
+[FAIL] OUT n=1 word=8 exp=505050505028a17f got=5050505050329a7f
+[PASS] OUT n=1 word=9 val=5050505050505050
+[FAIL] OUT n=1 word=10 exp=50505050507fc522 got=5050505050bbf77f
+[PASS] OUT n=1 word=11 val=5050505050505050
+[FAIL] OUT n=1 word=12 exp=5050505050687f34 got=505050505028a17f
+[PASS] OUT n=1 word=13 val=5050505050505050
+[FAIL] OUT n=1 word=14 exp=50505050500df2f2 got=50505050507fc522
+[PASS] OUT n=1 word=15 val=5050505050505050
+[FAIL] OUT n=1 word=16 exp=5050505050b8617f got=5050505050687f34
+[PASS] OUT n=1 word=17 val=5050505050505050
+[FAIL] OUT n=1 word=18 exp=50505050505a7f5d got=50505050500df2f2
+[PASS] OUT n=1 word=19 val=5050505050505050
+[FAIL] OUT n=1 word=20 exp=5050505050057f89 got=5050505050b8617f
+[PASS] OUT n=1 word=21 val=5050505050505050
+[FAIL] OUT n=1 word=22 exp=50505050502d457a got=50505050505a7f5d
+[PASS] OUT n=1 word=23 val=5050505050505050
+[FAIL] OUT n=1 word=24 exp=5050505050187f6e got=5050505050057f89
+[PASS] OUT n=1 word=25 val=5050505050505050
+[FAIL] OUT n=1 word=26 exp=5050505050fb7be5 got=50505050502d457a
+[PASS] OUT n=1 word=27 val=5050505050505050
+[FAIL] OUT n=1 word=28 exp=5050505050fc297f got=5050505050187f6e
+[PASS] OUT n=1 word=29 val=5050505050505050
+[FAIL] OUT n=1 word=30 exp=5050505050523f68 got=5050505050fb7be5
+[PASS] OUT n=1 word=31 val=5050505050505050
+[FAIL] OUT n=1 word=32 exp=505050505042817f got=5050505050fc297f
+[PASS] OUT n=1 word=33 val=5050505050505050
+[FAIL] OUT n=1 word=34 exp=50505050507fd505 got=5050505050523f68
+[PASS] OUT n=1 word=35 val=5050505050505050
+[FAIL] OUT n=1 word=36 exp=50505050507f7f80 got=505050505042817f
+[PASS] OUT n=1 word=37 val=5050505050505050
+[FAIL] OUT n=1 word=38 exp=5050505050dd7f7f got=50505050507fd505
+[PASS] OUT n=1 word=39 val=5050505050505050
+[FAIL] OUT n=1 word=40 exp=50505050507ff2ed got=50505050507f7f80
+[PASS] OUT n=1 word=41 val=5050505050505050
+[FAIL] OUT n=1 word=42 exp=50505050507f32dc got=5050505050dd7f7f
+[PASS] OUT n=1 word=43 val=5050505050505050
+[FAIL] OUT n=1 word=44 exp=50505050501eed00 got=50505050507ff2ed
+[PASS] OUT n=1 word=45 val=5050505050505050
+[FAIL] OUT n=1 word=46 exp=50505050507279e0 got=50505050507f32dc
+[PASS] OUT n=1 word=47 val=5050505050505050
+[FAIL] OUT n=1 word=48 exp=5050505050577f51 got=50505050501eed00
+[PASS] OUT n=1 word=49 val=5050505050505050
+[FAIL] OUT n=1 word=50 exp=5050505050547fb9 got=50505050507279e0
+[PASS] OUT n=1 word=51 val=5050505050505050
+[FAIL] OUT n=1 word=52 exp=5050505050720c24 got=5050505050577f51
+[PASS] OUT n=1 word=53 val=5050505050505050
+[FAIL] OUT n=1 word=54 exp=50505050507f7f3c got=5050505050547fb9
+[PASS] OUT n=1 word=55 val=5050505050505050
+[FAIL] OUT n=1 word=56 exp=5050505050807f7f got=5050505050720c24
+[PASS] OUT n=1 word=57 val=5050505050505050
+[FAIL] OUT n=1 word=58 exp=50505050500d4742 got=50505050507f7f3c
+[PASS] OUT n=1 word=59 val=5050505050505050
+[FAIL] OUT n=1 word=60 exp=50505050507f7fcf got=5050505050807f7f
+[PASS] OUT n=1 word=61 val=5050505050505050
+[FAIL] OUT n=1 word=62 exp=50505050507f160a got=50505050500d4742
+[PASS] OUT n=1 word=63 val=5050505050505050
+[FAIL] OUT n=1 word=64 exp=50505050506480c0 got=50505050507f7fcf
+[PASS] OUT n=1 word=65 val=5050505050505050
+[FAIL] OUT n=1 word=66 exp=50505050507f7fa9 got=50505050507f160a
+[PASS] OUT n=1 word=67 val=5050505050505050
+[FAIL] OUT n=1 word=68 exp=50505050507f7f80 got=50505050506480c0
+[PASS] OUT n=1 word=69 val=5050505050505050
+[FAIL] OUT n=1 word=70 exp=5050505050fead7f got=50505050507f7fa9
+[PASS] OUT n=1 word=71 val=5050505050505050
+[FAIL] OUT n=1 word=72 exp=505050505028fe7f got=50505050507f7f80
+[PASS] OUT n=1 word=73 val=5050505050505050
+[FAIL] OUT n=1 word=74 exp=5050505050505050 got=5050505050fead7f
+[PASS] OUT n=1 word=75 val=5050505050505050
+
+=== FAILURE: Found 113 Errors ===
+
+src/deit_accelerator_top_tb.v:382: $finish called at 9065000 (1ps)
+✅ System Verification Complete.

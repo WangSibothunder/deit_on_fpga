@@ -49,7 +49,7 @@ module deit_core #(
     wire ctrl_drain_en_unused;
     
     global_controller #(
-        .LATENCY(LATENCY_CFG)
+        .LATENCY(LATENCY_CFG + 1)
     ) u_controller (
         .clk                    (clk),
         .rst_n                  (rst_n),
@@ -194,7 +194,21 @@ module deit_core #(
         end
     end
     
-    wire acc_wr_en = valid_delay_line[LATENCY_CFG-1];
+    wire acc_wr_en_raw = valid_delay_line[LATENCY_CFG-1];
+
+    // Limit acc writes to cfg_compute_cycles to avoid extra tail pulses
+    reg [31:0] acc_cnt;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            acc_cnt <= 0;
+        end else if (!ctrl_input_stream_en) begin
+            acc_cnt <= 0;
+        end else if (acc_wr_en_raw && acc_cnt < cfg_compute_cycles) begin
+            acc_cnt <= acc_cnt + 1;
+        end
+    end
+
+    wire acc_wr_en = acc_wr_en_raw && (acc_cnt < cfg_compute_cycles);
 
     // =========================================================================
     // 7. Accumulator Bank Control (UPDATED)
