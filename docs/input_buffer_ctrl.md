@@ -1,193 +1,91 @@
-Input Buffer Controller Specification
+# Input Buffer Controller è§„æ ¼ä¹¦
 
-Version: 1.1 (Pipeline Fix Applied)
-Date: 2026-01-16
+Version: 1.2
+Date: 2026-03-08
 Module: input_buffer_ctrl.v
-Status: Verified (All Checkpoints Passed)
-
-1. Ä£¿é¸ÅÊö (Overview)
-
-input_buffer_ctrl ÊÇ PL Overlay Êı¾İÍ¨Â·µÄµÚÒ»Õ¾¡£ËüµÄÖ÷ÒªÖ°ÔğÊÇ½â¾ö ´ø¿í²»Æ¥Åä ºÍ Êı¾İ¸ñÊ½²»Æ¥Åä µÄÎÊÌâ£¬³äµ± DMA ÓëÂö¶¯ÕóÁĞÖ®¼äµÄ¡°±äËÙÏä¡±ºÍ¡°ĞîË®³Ø¡±¡£
-
-ºËĞÄ¹¦ÄÜ
-
-Gearbox (S2P Conversion): ½« DMA µÄ 64-bit AXI-Stream Êı¾İÁ÷ÊµÊ±×ª»»ÎªÂö¶¯ÕóÁĞËùĞèµÄ 96-bit ($12 \times 8$-bit) ²¢ĞĞÏòÁ¿¡£
-
-Ping-Pong Buffering: ²ÉÓÃË«»º³å»úÖÆ£¬ÔÊĞíÔÚ Core ¼ÆËãµ±Ç° Tile (Read Bank A) µÄÍ¬Ê±£¬DMA Ô¤¼ÓÔØÏÂÒ»¸ö Tile (Write Bank B)£¬´Ó¶øÑÚ¸ÇÊı¾İ´«ÊäÑÓ³Ù¡£
-
-Pipeline Alignment: ÊµÏÖÁËĞ´µØÖ·Á÷Ë®Ïß´òÅÄ£¬È·±£ RAM µÄĞ´Ê¹ÄÜÓëµØÖ·ÑÏ¸ñ¶ÔÆë£¬·ÀÖ¹Ê×Êı¾İĞ´Èë´íÎóµØÖ·¡£
-
-2. ½Ó¿Ú¶¨Òå (Interface Definition)
-
-Signal Group
-
-Name
-
-Width
-
-Direction
-
-Description
-
-Global
-
-clk
-
-1
-
-In
-
-System Clock (100MHz)
-
-
-
-rst_n
-
-1
-
-In
-
-Active Low Reset
-
-AXI-Stream Slave
-
-s_axis_tdata
-
-64
-
-In
-
-À´×Ô DMA µÄÔ­Ê¼Êı¾İÁ÷
-
-(Write Port)
-
-s_axis_tvalid
-
-1
-
-In
-
-Êı¾İÓĞĞ§Ö¸Ê¾
-
-
-
-s_axis_tready
-
-1
-
-Out
-
-×ÜÊÇÎª 1 (¼ÙÉè buffer ²»»áÒç³ö)
-
-
-
-s_axis_tlast
-
-1
-
-In
-
-(µ±Ç°°æ±¾Î´Ê¹ÓÃ£¬Ô¤Áô)
-
-Core Interface
-
-i_rd_en
-
-1
-
-In
-
-ºËĞÄ¶ÁÈ¡ÇëÇó (Read Enable)
-
-(Read Port)
-
-o_array_vec
-
-96
-
-Out
-
-Êä³ö¸øÕóÁĞµÄÏòÁ¿ (12 rows * 8 bit)
-
-Control
-
-i_bank_swap
-
-1
-
-In
-
-Toggle Signal. ÇĞ»» Ping-Pong ×´Ì¬¡£
-
-
-
-Ã¿µ±Íê³ÉÒ»¸ö Tile µÄ¼ÆËã/¼ÓÔØºóÓÉ Controller ´¥·¢¡£
-
-3. ¹Ø¼üÉè¼Æ»úÖÆ (Key Design Mechanisms)
-
-3.1 3-to-2 Gearbox ×´Ì¬»ú
-
-ÓÉÓÚÊäÈëÊÇ 64-bit£¬Êä³öÊÇ 96-bit£¬×îĞ¡¹«±¶ÊıÎª 192 bits¡£
-ÕâÒâÎ¶×Å Ã¿ 3 ¸ö 64-bit ÊäÈëÖÜÆÚ£¬²úÉú 2 ¸ö 96-bit Êä³öÖÜÆÚ¡£
-
-State 0 (Word 1): ½ÓÊÕ 64-bit£¬Ôİ´æÖÁ temp_reg¡£ÎŞĞ´Èë¡£
-
-State 1 (Word 2): ½ÓÊÕ 64-bit¡£
-
-Write 1: Æ´½Ó {Current[31:0], temp_reg[63:0]} (Little Endian) -> Ğ´Èë RAM¡£
-
-Store: ½« Current[63:32] Ôİ´æÖÁ temp_reg¡£
-
-State 2 (Word 3): ½ÓÊÕ 64-bit¡£
-
-Write 2: Æ´½Ó {Current[63:0], temp_reg[31:0]} -> Ğ´Èë RAM¡£
-
-Reset: »Øµ½ State 0¡£
-
-3.2 µØÖ·Á÷Ë®Ïß¶ÔÆë (Critical Fix)
-
-ÔÚ³õÊ¼Éè¼ÆÖĞ£¬RAM Ğ´Ê¹ÄÜ (ram_wen) ÊÇÔÚ×´Ì¬»úÄÚ²¿Âß¼­²úÉúµÄ£¬Ïà±È×´Ì¬Ìø×ªÑÓ³ÙÁËÒ»ÅÄ¡£Èç¹ûÖ±½ÓÊ¹ÓÃµ±Ç°µÄĞ´Ö¸Õë (wr_ptr) ×÷ÎªµØÖ·£¬»áµ¼ÖÂÊı¾İĞ´ÈëÁË wr_ptr + 1 µÄÎ»ÖÃ¡£
-
-½â¾ö·½°¸: ÒıÈë wr_addr_pipe ¼Ä´æÆ÷¡£
-
-ÔÚ×´Ì¬»ú¾ö¶¨Ğ´ÈëµÄ µ±ÅÄ (T0)£¬½«µ±Ç°µÄ wr_ptr Ëø´æÈë wr_addr_pipe¡£
-
-ÔÚ RAM Ö´ĞĞĞ´ÈëµÄ ÏÂÒ»ÅÄ (T1)£¬Ê¹ÓÃ wr_addr_pipe ×÷ÎªµØÖ·¡£
-
-Ğ§¹û: ram_wen (at T1) Óë wr_addr_pipe (at T1 ±£³Ö T0 µÄÖµ) ÍêÃÀ¶ÔÆë¡£
-
-3.3 Ping-Pong ÄÚ´æ¹ÜÀí
-
-Ê¹ÓÃµ¥¿éË«±¶Éî¶ÈµÄ BRAM Ä£ÄâË«»º³å¡£
-
-Memory Size: Width 96, Depth 512 (256 per Bank).
-
-Bank Select: bank_sel ¼Ä´æÆ÷¡£
-
-Write Address: {bank_sel, wr_addr_pipe}
-
-Read Address: {~bank_sel, rd_ptr}
-
-Swap: i_bank_swap ĞÅºÅ·­×ª bank_sel£¬²¢Í¬Ê±¸´Î»¶ÁĞ´Ö¸Õë¡£
-
-4. ÑéÖ¤½á¹û (Verification Results)
-
-Testbench: src/input_buffer_ctrl_tb.v
-
-Checkpoints:
-
-[PASS] CP1: Gearbox Logic. ÑéÖ¤ÁË 3¸ö 64-bit µ¥´Ê±»ÕıÈ·ÖØ×éÎª 2¸ö 96-bit ÏòÁ¿¡£
-
-[PASS] CP2: Read Verification. ÑéÖ¤ÁË Bank 0 Ğ´ÈëµÄÊı¾İÄÜ±»ÕıÈ·¶Á³ö£¬ÇÒÎŞ´íÎ»¡£
-
-[PASS] CP3: Ping-Pong Safety. ÑéÖ¤ÁËÔÚ¶ÁÈ¡ Bank 0 Ê±£¬Ğ´Èë Bank 1 ²»»áÆÆ»µ Bank 0 µÄÊı¾İ¡£
-
-5. ×ÊÔ´Ô¤¹À (Resource Estimation)
-
-BRAM: 1 Tile (36Kb) Configured as 512x72 (Simple Dual Port) + LUTRAM expansion for 96-bit width (or 2 BRAMs in parallel).
-
-Zynq-7020 BRAMs are 36Kb blocks.
-
-Êµ¼Ê×ÛºÏÊ±£¬Vivado ¿ÉÄÜ»áÊ¹ÓÃ 3 ¸ö 18k BRAM ²¢ÁªÀ´ÊµÏÖ 96-bit Î»¿í¡£
-
-LUTs: < 100 (State machine & Muxes).
+Status: æ–‡æ¡£æ›´æ–°ï¼ˆæœªé‡æ–°éªŒè¯ï¼‰
+
+## 1. æ¨¡å—æ¦‚è¿°
+input_buffer_ctrl æ˜¯æ•°æ®é€šè·¯å…¥å£ç¼“å†²ï¼Œè´Ÿè´£å°† AXI-Stream çš„ 64-bit æ•°æ®è½¬æ¢ä¸ºè„‰åŠ¨é˜µåˆ—æ‰€éœ€çš„ 96-bit å¹¶è¡Œå‘é‡ï¼Œå¹¶é€šè¿‡ Ping-Pong æœºåˆ¶å®ç°è®¡ç®—ä¸åŠ è½½é‡å ã€‚
+
+ä¸»è¦åŠŸèƒ½ï¼š
+- Gearboxï¼š3 ä¸ª 64-bit è¾“å…¥é‡ç»„ä¸º 2 ä¸ª 96-bit è¾“å‡ºã€‚
+- Ping-Pong Bufferï¼šåŒ Bank äº¤æ›¿è¯»å†™ï¼Œæ©ç›– DMA ä¼ è¾“å»¶è¿Ÿã€‚
+- Pipeline Alignmentï¼šå†™åœ°å€æ‰“ä¸€æ‹å¯¹é½ï¼Œè¯»ç«¯é‡‡ç”¨ lookahead è¯»ã€‚
+
+## 2. å‚æ•°
+| å‚æ•° | é»˜è®¤ | è¯´æ˜ |
+| --- | --- | --- |
+| DEPTH_LOG2 | 8 | å• Bank æ·±åº¦ä¸º 2^DEPTH_LOG2ï¼ˆé»˜è®¤ 256ï¼‰ |
+| DATA_WIDTH | 64 | AXI-Stream æ•°æ®å®½åº¦ |
+
+## 3. æ¥å£å®šä¹‰
+### 3.1 Global
+| ä¿¡å· | å®½åº¦ | æ–¹å‘ | è¯´æ˜ |
+| --- | --- | --- | --- |
+| clk | 1 | In | æ—¶é’Ÿ |
+| rst_n | 1 | In | ä½æœ‰æ•ˆå¤ä½ |
+
+### 3.2 AXI-Stream Slaveï¼ˆå†™ç«¯ï¼‰
+| ä¿¡å· | å®½åº¦ | æ–¹å‘ | è¯´æ˜ |
+| --- | --- | --- | --- |
+| s_axis_tdata | DATA_WIDTH | In | è¾“å…¥æ•°æ® |
+| s_axis_tvalid | 1 | In | æ•°æ®æœ‰æ•ˆ |
+| s_axis_tready | 1 | Out | æ’ä¸º 1ï¼ˆä¸èƒŒå‹ï¼‰ |
+| s_axis_tlast | 1 | In | é¢„ç•™ï¼Œå½“å‰æœªä½¿ç”¨ |
+
+### 3.3 Core è¯»ç«¯
+| ä¿¡å· | å®½åº¦ | æ–¹å‘ | è¯´æ˜ |
+| --- | --- | --- | --- |
+| i_rd_en | 1 | In | Core è¯»å–ä½¿èƒ½ |
+| o_array_vec | 96 | Out | 12 è¡Œ * 8-bit å‘é‡ |
+| o_dat_valid | 1 | Out | è¾“å‡ºæ•°æ®æœ‰æ•ˆ |
+
+### 3.4 Control
+| ä¿¡å· | å®½åº¦ | æ–¹å‘ | è¯´æ˜ |
+| --- | --- | --- | --- |
+| i_bank_swap | 1 | In | Bank ç¿»è½¬è§¦å‘ |
+
+### 3.5 Debug
+| ä¿¡å· | å®½åº¦ | æ–¹å‘ | è¯´æ˜ |
+| --- | --- | --- | --- |
+| dbg_ibuf_wr_ptr | 8 | Out | å†™æŒ‡é’ˆä½ 8 ä½ |
+
+## 4. æ—¶åº/å»¶è¿Ÿ
+- Gearboxï¼š3 ä¸ª 64b è¾“å…¥ -> 2 ä¸ª 96b å†™å…¥ã€‚
+- RAM è¯»ç«¯å£ 1 æ‹å»¶è¿Ÿã€‚
+- o_dat_valid = i_rd_en å»¶è¿Ÿ 1 æ‹ï¼ˆä¸æ•°æ®å¯¹é½ï¼‰ã€‚
+- i_bank_swap è§¦å‘ bank_sel ç¿»è½¬ï¼Œå¹¶æ¸…é›¶è¯»å†™æŒ‡é’ˆã€‚
+
+## 5. å…³é”®è®¾è®¡æœºåˆ¶
+- 3-to-2 Gearboxï¼šé€šè¿‡ gb_state ä¸ temp_reg æ‹¼æ¥æ•°æ®ã€‚
+- wr_addr_pipeï¼šå°†å†™åœ°å€æ‰“ä¸€æ‹ï¼Œé¿å… ram_wen ä¸åœ°å€é”™ä½ã€‚
+- Ping-Pongï¼šå•å—åŒå€æ·±åº¦ RAMï¼Œåœ°å€é«˜ä½ä½œä¸º Bank é€‰æ‹©ã€‚
+- Lookahead è¯»ï¼šo_dat_valid ä¸º 1 æ—¶è¯»åœ°å€å‰ç»åˆ°ä¸‹ä¸€é¡¹ã€‚
+
+## 6. å¤ä½/åˆå§‹åŒ–
+- rst_n æ¸…é™¤çŠ¶æ€æœºã€æŒ‡é’ˆä¸ä¸´æ—¶å¯„å­˜å™¨ã€‚
+- RAM åœ¨ä»¿çœŸä¸­åˆå§‹åŒ–ä¸º 0ï¼Œé¿å… X ä¼ æ’­ã€‚
+
+## 7. è°ƒè¯•ä¿¡å·
+- dbg_ibuf_wr_ptrï¼šè§‚å¯Ÿå†™å…¥è¿›åº¦ä¸ Bank çŠ¶æ€ã€‚
+
+## å±€éƒ¨æ•°æ®æµåŠ¨
+- s_axis_tdata è¿›å…¥ 3Ã—64bâ†’2Ã—96b Gearboxï¼Œgb_state è½®è½¬æ‹¼æ¥ã€‚
+- ram_wen ä¸ wr_addr_pipe å¯¹é½åå†™å…¥å½“å‰ bankã€‚
+- i_bank_swap è§¦å‘ bank_sel ç¿»è½¬å¹¶æ¸…ç©ºè¯»å†™æŒ‡é’ˆã€‚
+- i_rd_en å‘èµ·è¯»è¯·æ±‚ï¼Œo_dat_valid å»¶è¿Ÿ 1 æ‹è¾“å‡ºã€‚
+- o_array_vec ä½œä¸º deit_core çš„è¾“å…¥æ¿€æ´»å‘é‡ã€‚
+- s_axis_tready æ’ä¸º 1ï¼Œå¸§è¾¹ç•Œç”± i_bank_swap æ§åˆ¶ã€‚
+
+## çŠ¶æ€æœºæ§åˆ¶å›¾
+```mermaid
+stateDiagram-v2
+    [*] --> GB0
+    GB0 --> GB1: s_axis_tvalid
+    GB1 --> GB2: s_axis_tvalid
+    GB2 --> GB0: s_axis_tvalid
+    GB0 --> GB0: i_bank_swap
+    GB1 --> GB0: i_bank_swap
+    GB2 --> GB0: i_bank_swap
+```

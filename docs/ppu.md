@@ -1,124 +1,51 @@
-Post-Processing Unit (PPU) Specification
+# Post-Processing Unit (PPU) 规格书
 
-Version: 1.0
-Date: 2026-01-16
+Version: 1.1
+Date: 2026-03-08
 Module: ppu.v
-Status: Design Phase
-
-1. 模块概述 (Overview)
-
-PPU 负责将 Accumulator 输出的高精度 INT32 数据流，通过定点算术运算，压缩回 INT8 格式，以便存入 Output Buffer 并通过 DMA 传回内存。
-
-核心功能
-
-Scaling: 使用定点乘法模拟浮点缩放 ($Input \times M$). $M$ 是一个 16-bit 的定点整数。
-
-Shifting: 右移操作以调整定点位置 ($Result \gg S$).
-
-Zero-Point Add: 加上输出的零点 ($+ ZP$).
-
-Clamping: 饱和截断到 [-128, 127] (INT8) 或 [0, 255] (UINT8).
-
-2. 接口定义
-
-Signal
-
-Width
-
-Dir
-
-Description
-
-Data Path
-
-
-
-
-
-
-
-clk, rst_n
-
-1
-
-In
-
-Clock & Reset
-
-i_valid
-
-1
-
-In
-
-Input Valid
-
-i_data_vec
-
-16*32
-
-In
-
-来自 Accumulator 的 16 个 INT32
-
-o_valid
-
-1
-
-Out
-
-Output Valid (Pipeline delay)
-
-o_data_vec
-
-16*8
-
-Out
-
-输出给 Output Buffer 的 16 个 INT8
-
-Configuration
-
-
-
-
-
-From AXI-Lite Control
-
-cfg_mult
-
-16
-
-In
-
-Quantized Multiplier (Fixed Point)
-
-cfg_shift
-
-5
-
-In
-
-Right Shift Amount
-
-cfg_zp
-
-8
-
-In
-
-Output Zero Point
-
-3. 资源消耗预警 (DSP Usage)
-
-我们需要并行处理 16 个数据。
-
-每个通道需要 1 个乘法器。
-
-Zynq-7020 总共 220 DSPs。Systolic Array 用了 $12 \times 16 = 192$ 个。
-
-剩余 $220 - 192 = 28$ 个。
-
-PPU 需要 16 个 DSP。资源是够的 (192 + 16 = 208 < 220)，但比较紧张。
-
-备选方案：如果时序或布线困难，可以将 PPU 序列化（例如每周期处理 8 个，分两拍），但这会增加控制复杂度。目前先尝试全并行。
+Status: 文档更新（未重新验证）
+
+## 1. 模块概述
+PPU 对阵列输出的 INT32 做定点量化，输出 INT8，支持 bias、scale、shift、zero-point，满足量化推理输出要求。
+
+## 2. 参数
+无显式参数（使用 `params.vh` 中的 ARRAY_COL 等宏）。
+
+## 3. 接口定义
+### 3.1 Data Path
+| 信号 | 宽度 | 方向 | 说明 |
+| --- | --- | --- | --- |
+| clk, rst_n | 1 | In | 时钟与复位 |
+| i_valid | 1 | In | 输入有效 |
+| i_data_vec | 16*32 | In | 16 路 INT32 输入 |
+| o_valid | 1 | Out | 输出有效（延迟 1 拍） |
+| o_data_vec | 16*8 | Out | 16 路 INT8 输出 |
+
+### 3.2 Configuration
+| 信号 | 宽度 | 方向 | 说明 |
+| --- | --- | --- | --- |
+| cfg_mult | 16 | In | 定点乘数 |
+| cfg_shift | 5 | In | 右移位数 |
+| cfg_zp | 8 | In | Zero Point |
+| cfg_bias | 32 | In | Bias（INT32） |
+
+## 4. 时序/延迟
+- 每个 lane 为组合计算 + 1 拍寄存输出。
+- o_valid = i_valid 延迟 1 拍。
+
+## 5. 关键设计机制
+- 计算链：bias -> 乘法 -> 右移 -> 加零点 -> Clamp。
+- Clamp 范围：[-128, 127]。
+
+## 6. 复位/初始化
+- rst_n 清零输出寄存器。
+
+## 7. 备注
+- 如果 DSP/时序压力较大，可将 PPU 进行序列化（每拍处理部分 lane）。
+
+## 局部数据流动
+- 输入 16×INT32 psum，逐 lane 加 bias。
+- 乘以 cfg_mult 并右移 cfg_shift 完成缩放。
+- 加 cfg_zp 进行零点偏移，饱和截断到 INT8。
+- 输出寄存器打拍，o_valid 延迟 1 拍。
+- 结果拼接成 128b 写入输出缓冲。

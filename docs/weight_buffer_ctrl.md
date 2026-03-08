@@ -1,122 +1,73 @@
-Weight Buffer Controller Specification
+# Weight Buffer Controller è§„æ ¼ä¹¦
 
-Version: 1.0
-Date: 2026-01-16
+Version: 1.1
+Date: 2026-03-08
 Module: weight_buffer_ctrl.v
-Status: Design Phase
-
-1. Ä£¿é¸ÅÊö (Overview)
-
-weight_buffer_ctrl ÓÃÓÚ¹ÜÀíÂö¶¯ÕóÁĞµÄÈ¨ÖØ¼ÓÔØ¡£ÓÉÓÚÎÒÃÇ²ÉÓÃ Weight Stationary (WS) ¼Ü¹¹£¬È¨ÖØĞèÒªÔÚ¼ÆËã¿ªÊ¼Ç°±»Ô¤¼ÓÔØµ½ÕóÁĞµÄÃ¿Ò»¸ö PE ÖĞ¡£
-
-ºËĞÄÌØĞÔ
-
-2-to-1 Gearbox: ½« 64-bit AXI-Stream ÊäÈë×ª»»Îª 128-bit ÄÚ²¿´æ´¢Î»¿í¡£Ã¿ 2 ¸ö DMA ÖÜÆÚ¶ÔÓ¦ 1 ¸öÕóÁĞĞĞ¼ÓÔØÖÜÆÚ¡£
-
-Double Buffering (Ping-Pong): ¾¡¹ÜÄ¿Ç°µÄ FSM ÊÇ´®ĞĞµÄ£¨Load -> Compute£©£¬µ«ÎÒÃÇÒÀÈ»±£ÁôË«»º³å¼Ü¹¹£¬ÒÔÖ§³ÖÎ´À´µÄÁ÷Ë®ÏßÓÅ»¯£¨¼´ÔÚ¼ÆËã Tile N µÄÍ¬Ê±¼ÓÔØ Tile N+1 µÄÈ¨ÖØ£©¡£
-
-LUTRAM Implementation: ÓÉÓÚÃ¿¸ö Tile ½öĞè´æ´¢ 12 ĞĞÈ¨ÖØ£¨12 $\times$ 128-bit = 1.5Kb£©£¬ÎÒÃÇÊ¹ÓÃ FPGA µÄ·Ö²¼Ê½ RAM (LUTRAM) ÊµÏÖ£¬½ÚÊ¡ BRAM ×ÊÔ´¡£
-
-2. ½Ó¿Ú¶¨Òå
-
-Signal
-
-Width
-
-Dir
-
-Description
-
-AXI-Stream Slave
-
-
-
-
-
-
-
-s_axis_tdata
-
-64
-
-In
-
-Weights from DMA
-
-s_axis_tvalid
-
-1
-
-In
-
-
-
-s_axis_tready
-
-1
-
-Out
-
-Always 1 (Flow control simplified)
-
-Core Interface
-
-
-
-
-
-
-
-i_weight_load_en
-
-1
-
-In
-
-À´×Ô Core µÄ¶ÁÈ¡ÇëÇó (¶ÔÓ¦ ctrl_weight_load_en)
-
-o_weight_vec
-
-128
-
-Out
-
-16 Cols * 8-bit weights
-
-Control
-
-
-
-
-
-
-
-i_bank_swap
-
-1
-
-In
-
-Toggle Ping-Pong buffer
-
-3. µØÖ·ÓëÊı¾İÁ÷
-
-Input Sequence: ¼ÙÉè 12 ĞĞ (Row 0 to 11)¡£
-
-DMA Order:
-
-Word 0: Row 0 [63:0]
-
-Word 1: Row 0 [127:64] -> Write RAM Addr 0
-
-Word 2: Row 1 [63:0]
-
-Word 3: Row 1 [127:64] -> Write RAM Addr 1
-
-...
-
-Core Load:
-
-global_controller À­¸ß load_en¡£
-
-Buffer Ã¿¸öÊ±ÖÓÖÜÆÚÊä³öÒ»ĞĞÊı¾İ (128-bit)£¬µØÖ·×ÔÔö¡£
+Status: æ–‡æ¡£æ›´æ–°ï¼ˆæœªé‡æ–°éªŒè¯ï¼‰
+
+## 1. æ¨¡å—æ¦‚è¿°
+weight_buffer_ctrl ç®¡ç†æƒé‡åŠ è½½æµç¨‹ï¼Œå°† AXI-Stream çš„ 64-bit æƒé‡æµè½¬æ¢ä¸º 128-bit è¡Œæƒé‡ï¼Œå¹¶ä»¥ Ping-Pong æ–¹å¼ä¾›é˜µåˆ—è¯»å–ã€‚
+
+ä¸»è¦åŠŸèƒ½ï¼š
+- 2-to-1 Gearboxï¼š2 ä¸ª 64-bit è¾“å…¥ç»„æˆ 1 ä¸ª 128-bit æƒé‡è¡Œã€‚
+- Ping-Pong Bufferï¼šæ”¯æŒé¢„åŠ è½½ä¸‹ä¸€ç»„æƒé‡ã€‚
+- Pipeline Alignmentï¼šå†™åœ°å€æ‰“æ‹ã€è¯»ç«¯ lookahead å¯¹é½ã€‚
+
+## 2. å‚æ•°
+| å‚æ•° | é»˜è®¤ | è¯´æ˜ |
+| --- | --- | --- |
+| DEPTH_LOG2 | 4 | å• Bank æ·±åº¦ä¸º 16 è¡Œ |
+| OUT_WIDTH | ARRAY_COL*8 | æƒé‡è¡Œå®½åº¦ï¼ˆé»˜è®¤ 128bï¼‰ |
+
+## 3. æ¥å£å®šä¹‰
+### 3.1 AXI-Stream Slave
+| ä¿¡å· | å®½åº¦ | æ–¹å‘ | è¯´æ˜ |
+| --- | --- | --- | --- |
+| s_axis_tdata | 64 | In | æƒé‡è¾“å…¥ |
+| s_axis_tvalid | 1 | In | æ•°æ®æœ‰æ•ˆ |
+| s_axis_tready | 1 | Out | æ’ä¸º 1ï¼ˆä¸èƒŒå‹ï¼‰ |
+
+### 3.2 Core è¯»ç«¯
+| ä¿¡å· | å®½åº¦ | æ–¹å‘ | è¯´æ˜ |
+| --- | --- | --- | --- |
+| i_weight_load_en | 1 | In | æƒé‡è¯»å–ä½¿èƒ½ |
+| o_weight_vec | 128 | Out | 16 åˆ—æƒé‡å‘é‡ |
+| o_dat_valid | 1 | Out | è¾“å‡ºæ•°æ®æœ‰æ•ˆ |
+
+### 3.3 Control
+| ä¿¡å· | å®½åº¦ | æ–¹å‘ | è¯´æ˜ |
+| --- | --- | --- | --- |
+| i_bank_swap | 1 | In | Bank ç¿»è½¬è§¦å‘ |
+
+### 3.4 Debug
+| ä¿¡å· | å®½åº¦ | æ–¹å‘ | è¯´æ˜ |
+| --- | --- | --- | --- |
+| dbg_wbuf_wr_ptr | 4 | Out | å†™æŒ‡é’ˆ |
+| dbg_wbuf_ram_wen | 1 | Out | RAM å†™ä½¿èƒ½ |
+| dbg_wbuf_gb_cnt | 1 | Out | Gearbox çŠ¶æ€ |
+
+## 4. æ—¶åº/å»¶è¿Ÿ
+- Gearboxï¼šæ¯ 2 ä¸ª 64b è¾“å…¥äº§ç”Ÿ 1 ä¸ª 128b å†™å…¥ã€‚
+- RAM è¯»å»¶è¿Ÿ 1 æ‹ã€‚
+- o_dat_valid = i_weight_load_en å»¶è¿Ÿ 2 æ‹ã€‚
+- i_bank_swap ç¿»è½¬è¯»å†™ Bank å¹¶æ¸…å†™æŒ‡é’ˆã€‚
+
+## 5. å…³é”®è®¾è®¡æœºåˆ¶
+- å†™åœ°å€ç®¡çº¿ï¼šwr_addr_pipe ä¸ ram_wen å¯¹é½ï¼Œé¿å…é¦–æ‹é”™ä½ã€‚
+- Ping-Pongï¼šè¯»ç«¯è®¿é—® ~bank_selï¼›å†™ç«¯è®¿é—® bank_selã€‚
+- Lookahead è¯»ï¼šo_dat_valid ä¸º 1 æ—¶ï¼Œè¯»åœ°å€å‰ç»åˆ°ä¸‹ä¸€é¡¹ã€‚
+
+## 6. å¤ä½/åˆå§‹åŒ–
+- rst_n æ¸…é™¤ Gearboxã€æŒ‡é’ˆä¸ valid ç®¡çº¿ã€‚
+- RAM ä»¿çœŸåˆå§‹åŒ–ä¸º 0ã€‚
+
+## 7. è°ƒè¯•ä¿¡å·
+- dbg_wbuf_wr_ptr / dbg_wbuf_ram_wen / dbg_wbuf_gb_cnt ç”¨äºè§‚å¯Ÿå†™å…¥ä¸ Gearbox çŠ¶æ€ã€‚
+
+## å±€éƒ¨æ•°æ®æµåŠ¨
+- s_axis_tdata 64b è¿›å…¥ Gearboxï¼Œ2 beat æ‹¼æˆ 128bã€‚
+- ram_wen å†™å…¥å½“å‰ bankï¼Œwr_addr_pipe ä¸æ•°æ®å¯¹é½ã€‚
+- i_bank_swap ç¿»è½¬ bank å¹¶æ¸…é›¶ wr_ptr/gb_cntã€‚
+- i_weight_load_en è§¦å‘è¯»ç«¯ï¼Œo_dat_valid å»¶è¿Ÿ 2 æ‹ã€‚
+- lookahead è¯»åœ°å€ä¿è¯ Data0,Data0,Data1 å¯¹é½é˜µåˆ—ã€‚
+- o_weight_vec è¾“å‡ºåˆ° core è¡ŒåŠ è½½é“¾è·¯ã€‚
