@@ -1,12 +1,18 @@
 // -----------------------------------------------------------------------------
-// 文件名: systolic_array.v
-// 描述: 参数化脉动阵列顶层
-// 架构: 
-//    - Row: `ARRAY_ROW` (12)
-//    - Col: `ARRAY_COL` (16)
-//    - Dataflow: Weight Stationary
-//    - Input: Left -> Right (Activations)
-//    - Output: Top -> Down (Partial Sums)
+// 文件: src/rtl/systolic_array.v
+// 说明: 脉动阵列顶层（Weight Stationary）
+// -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// 规格书索引
+// 模块: systolic_array
+// 规格书: docs/systolic_array.md
+// 用途: 参数化脉动阵列 (Weight Stationary)，完成并行 MAC
+// 关键参数: ARRAY_ROW/ARRAY_COL/DATA_WIDTH/ACC_WIDTH
+// 接口分组:
+//   - Control: en_compute, row_load_en
+//   - Data: in_act_vec/in_weight_vec -> out_psum_vec
+// 时序要点:
+//   - 激活左进右出、部分和上进下出；权重按列广播
 // -----------------------------------------------------------------------------
 `include "params.vh"
 
@@ -20,6 +26,7 @@ module systolic_array (
     // 权重加载使能：每一位控制对应的一行 (One-Hot or Sequential logic outside)
     // 例如: row_load_en[0] = 1 时，第0行加载权重
     input  wire [`ARRAY_ROW-1:0]        row_load_en, 
+    // row_load_en 建议 one-hot 或时分控制，逐行加载权重
 
     // --- 数据通路 (扁平化端口) ---
     // 输入特征向量 (12行 x 8bit) -> 这里的输入是同时喂给左侧第一列的
@@ -88,7 +95,7 @@ module systolic_array (
                 assign pe_load_en = row_load_en[r];
 
                 // --- 2. 实例化 PE ---
-                pe pe_inst (
+                (* use_dsp = "yes" *) pe pe_inst (
                     .clk            (clk),
                     .rst_n          (rst_n),
                     .en_compute     (en_compute),

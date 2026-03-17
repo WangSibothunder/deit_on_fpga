@@ -40,6 +40,13 @@ module axi_lite_control_tb;
     wire [4:0]  o_ppu_shift;
     wire [7:0]  o_ppu_zp;
     wire [31:0] o_ppu_bias;
+    wire        o_output_en;
+    wire [31:0] i_dbg0 = 32'h0;
+    wire [31:0] i_dbg1 = 32'h0;
+    wire [31:0] i_dbg2 = 32'h0;
+    wire [31:0] i_dbg3 = 32'h0;
+    wire        o_dbg_snap;
+    wire        o_dbg_clr;
     // --- DUT Instantiation ---
     axi_lite_control dut (
         .clk(clk), .rst_n(rst_n),
@@ -51,7 +58,9 @@ module axi_lite_control_tb;
         .o_ap_start(o_ap_start), .o_soft_rst_n(o_soft_rst_n),
         .o_cfg_compute_cycles(o_cfg_compute_cycles), .o_cfg_acc_mode(o_cfg_acc_mode),
         .i_ap_done(i_ap_done), .i_ap_idle(i_ap_idle),
-        .o_ppu_mult(o_ppu_mult), .o_ppu_shift(o_ppu_shift), .o_ppu_zp(o_ppu_zp), .o_ppu_bias(o_ppu_bias)
+        .o_ppu_mult(o_ppu_mult), .o_ppu_shift(o_ppu_shift), .o_ppu_zp(o_ppu_zp), .o_ppu_bias(o_ppu_bias), .o_output_en(o_output_en)
+        , .i_dbg0(i_dbg0), .i_dbg1(i_dbg1), .i_dbg2(i_dbg2), .i_dbg3(i_dbg3)
+        , .o_dbg_snap(o_dbg_snap), .o_dbg_clr(o_dbg_clr)
     
     );
 

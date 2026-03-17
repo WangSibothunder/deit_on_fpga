@@ -1,10 +1,19 @@
 // -----------------------------------------------------------------------------
-// ļ: src/rtl/ppu.v
-// 汾: 1.2 (Added Bias Addition)
-// : Ԫ (INT32 -> INT8)
-//       Formula: Clamp( ((Input + Bias) * Mult >> Shift) + ZP )
+// 文件: src/rtl/ppu.v
+// 说明: 后处理量化单元（INT32->INT8）
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// 规格书索引
+// 模块: ppu
+// 规格书: docs/ppu.md
+// 用途: 后处理量化 (INT32 -> INT8)，支持 bias、scale、shift、zero-point
+// 接口分组:
+//   - Data: i_valid/i_data_vec -> o_valid/o_data_vec
+//   - Config: cfg_mult/cfg_shift/cfg_zp/cfg_bias
+// 时序要点:
+//   - 每 lane 组合运算 + 1 拍寄存，o_valid 延迟 1 拍
+// -----------------------------------------------------------------------------
 `timescale 1ns / 1ps
 `include "params.vh"
 
@@ -80,7 +89,7 @@ module ppu (
         end
     endgenerate
 
-    // Valid Pipeline
+    // Valid Pipeline: 与输出寄存对齐 1 拍
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) o_valid <= 0;
         else        o_valid <= i_valid;

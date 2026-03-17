@@ -1,6 +1,6 @@
 // -----------------------------------------------------------------------------
-// ļ: src/tb/weight_buffer_ctrl_tb.v
-// : ֤ Weight Buffer (Gearbox 64->128 & Ping-Pong)
+// File: src/tb/weight_buffer_ctrl_tb.v
+// Desc: Verify 24-beat write + 12-row read order
 // -----------------------------------------------------------------------------
 `timescale 1ns / 1ps
 
@@ -10,17 +10,26 @@ module weight_buffer_ctrl_tb;
     reg [63:0] s_axis_tdata;
     reg s_axis_tvalid;
     wire s_axis_tready;
-    
+
     reg i_weight_load_en;
     wire [127:0] o_weight_vec; // 16 * 8 = 128
     reg i_bank_swap;
+    wire o_dat_valid;
+
+    wire [3:0] dbg_wbuf_wr_ptr;
+    wire dbg_wbuf_ram_wen;
+    wire dbg_wbuf_gb_cnt;
 
     // DUT
     weight_buffer_ctrl dut (
         .clk(clk), .rst_n(rst_n),
         .s_axis_tdata(s_axis_tdata), .s_axis_tvalid(s_axis_tvalid), .s_axis_tready(s_axis_tready),
         .i_weight_load_en(i_weight_load_en), .o_weight_vec(o_weight_vec),
-        .i_bank_swap(i_bank_swap)
+        .o_dat_valid(o_dat_valid),
+        .i_bank_swap(i_bank_swap),
+        .dbg_wbuf_wr_ptr(dbg_wbuf_wr_ptr),
+        .dbg_wbuf_ram_wen(dbg_wbuf_ram_wen),
+        .dbg_wbuf_gb_cnt(dbg_wbuf_gb_cnt)
     );
 
     always #5 clk = ~clk;
@@ -36,6 +45,11 @@ module weight_buffer_ctrl_tb;
     endtask
 
     integer err_cnt = 0;
+    integer i;
+    integer row_idx;
+
+    reg [63:0] beat_data [0:23];
+    reg [127:0] exp_row [0:11];
 
     initial begin
         $dumpfile("weight_verify.vcd");
@@ -45,67 +59,50 @@ module weight_buffer_ctrl_tb;
         s_axis_tdata = 0; s_axis_tvalid = 0;
         i_weight_load_en = 0; i_bank_swap = 0;
 
+        // prepare expected data
+        for (i = 0; i < 24; i = i + 1) begin
+            beat_data[i] = {32'hA5A50000 + i[31:0], 32'h5A5A0000 + i[31:0]};
+        end
+        for (i = 0; i < 12; i = i + 1) begin
+            exp_row[i] = {beat_data[i*2+1], beat_data[i*2]};
+        end
+
         #20 rst_n = 1;
         #20;
 
-        $display("=== START WEIGHT BUFFER VERIFICATION ===");
+        $display("=== START WEIGHT BUFFER VERIFICATION (24 BEATS) ===");
 
-        // ---------------------------------------------------------
-        // CP1: Write to Bank 0 (Gearbox Test)
-        // ---------------------------------------------------------
-        // Write Row 0 (128 bits): {High, Low}
-        // Low:  64'h11111111_00000000
-        // High: 64'h33333333_22222222
-        // Result: 128'h33333333_22222222_11111111_00000000
-        
-        $display("[TB] Writing Row 0 to Bank 0...");
-        send_word(64'h11111111_00000000); // Low
-        send_word(64'h33333333_22222222); // High (Triggers Write)
-        
-        // Write Row 1
-        // Low:  64'h55555555_44444444
-        // High: 64'h77777777_66666666
-        $display("[TB] Writing Row 1 to Bank 0...");
-        send_word(64'h55555555_44444444); 
-        send_word(64'h77777777_66666666); 
+        // Write 24 beats into bank 0
+        for (i = 0; i < 24; i = i + 1) begin
+            send_word(beat_data[i]);
+        end
 
-        #20;
-
-        // ---------------------------------------------------------
-        // CP2: Bank Swap & Read
-        // ---------------------------------------------------------
-        $display("[TB] Swapping Banks...");
+        // Bank swap to read written bank
         @(posedge clk); i_bank_swap = 1;
         @(posedge clk); i_bank_swap = 0;
 
-        $display("[TB] Reading from Bank 0...");
-        // Enable Read (Simulate Controller)
+        // Read 12 rows
         i_weight_load_en = 1;
-        
-        // Latency 1 (Address) -> Latency 2 (Data Out)
-        @(posedge clk); 
-        @(posedge clk);
-        
-        // Check Row 0
-        if (o_weight_vec === 128'h33333333_22222222_11111111_00000000)
-            $display("[PASS] CP2a: Row 0 Correct.");
-        else begin
-            $display("[FAIL] CP2a: Row 0 Mismatch. Got %h", o_weight_vec);
-            err_cnt = err_cnt + 1;
+        row_idx = 0;
+        while (row_idx < 12) begin
+            @(posedge clk);
+            if (o_dat_valid) begin
+                if (o_weight_vec !== exp_row[row_idx]) begin
+                    $display("[FAIL] Row %0d exp=%h got=%h", row_idx, exp_row[row_idx], o_weight_vec);
+                    err_cnt = err_cnt + 1;
+                end else begin
+                    $display("[PASS] Row %0d val=%h", row_idx, o_weight_vec);
+                end
+                row_idx = row_idx + 1;
+            end
         end
-
-        // Check Row 1 (Next cycle)
-        @(posedge clk);
-        if (o_weight_vec === 128'h77777777_66666666_55555555_44444444)
-            $display("[PASS] CP2b: Row 1 Correct.");
-        else begin
-            $display("[FAIL] CP2b: Row 1 Mismatch. Got %h", o_weight_vec);
-            err_cnt = err_cnt + 1;
-        end
-
         i_weight_load_en = 0;
 
-        // --- Final Report ---
+        // Debug checks
+        if (dbg_wbuf_wr_ptr !== 12) begin
+            $display("[WARN] dbg_wbuf_wr_ptr=%0d (expected 12)", dbg_wbuf_wr_ptr);
+        end
+
         if (err_cnt == 0) $display("\n=== SUCCESS: All Checkpoints Passed! ===\n");
         else $display("\n=== FAILURE: Found %0d Errors ===\n", err_cnt);
         $finish;

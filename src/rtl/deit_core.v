@@ -1,9 +1,23 @@
 // -----------------------------------------------------------------------------
-// 文件名: src/rtl/deit_core.v
-// 版本: 1.2 (Address Width Expansion)
-// 描述: 核心计算逻辑，已升级累加器地址位宽至 8-bit (支持 M=197)
+// 文件: src/rtl/deit_core.v
+// 说明: 核心计算与时序对齐，含控制器/阵列/累加器
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// 规格书索引
+// 模块: deit_core
+// 规格书: docs/deit_core.md
+// 用途: 核心计算与时序对齐，包含控制器、脉动阵列、累加器
+// 关键参数: LATENCY_CFG(流水延迟), ADDR_WIDTH(累加器深度)
+// 接口分组:
+//   - Control: ap_start/cfg_compute_cycles/cfg_acc_mode
+//   - Data: in_act_vec/in_weight_vec -> out_acc_vec
+//   - Handshake: i_weight_valid/i_weight_dma_beat/i_input_valid
+//   - Buffer Control: ctrl_weight_dma_req/ctrl_weight_load_en/ctrl_input_stream_en
+// 时序要点:
+//   - 权重加载信号与数据统一打一拍对齐
+//   - valid_delay_line 对齐阵列输出与累加写入
+// -----------------------------------------------------------------------------
 `timescale 1ns / 1ps
 `include "params.vh"
 
@@ -26,7 +40,9 @@ module deit_core #(
     input  wire [`ARRAY_COL*`DATA_WIDTH-1:0]  in_weight_vec,
     // [ADD] 新增握手信号端口
     input  wire                               i_weight_valid, // 来自 Weight Buffer
+    input  wire                               i_weight_dma_beat, // Weight DMA beat handshake
     input  wire                               i_input_valid,  // 来自 Input Buffer (用于 Input Latency 对齐)
+    input  wire                               i_dbg_clr,
     
     output wire [`ARRAY_COL*`ACC_WIDTH-1:0]   out_acc_vec,
     
@@ -40,7 +56,12 @@ module deit_core #(
     output wire [ADDR_WIDTH-1:0]        dbg_acc_addr, // Expanded
     output wire [`ACC_WIDTH-1:0]        dbg_aligned_col0,
     output wire [`ACC_WIDTH-1:0]        dbg_aligned_col15,
-    output wire [`ACC_WIDTH-1:0]        dbg_raw_col0
+    output wire [`ACC_WIDTH-1:0]        dbg_raw_col0,
+    output wire [2:0]                   dbg_ctrl_state,
+    output wire [31:0]                  dbg_cnt_load,
+    output wire [31:0]                  dbg_cnt_seq,
+    output wire [31:0]                  dbg_cnt_drain,
+    output wire [31:0]                  dbg_weight_beat_cnt
 );
 
     // =========================================================================
@@ -57,18 +78,25 @@ module deit_core #(
         .cfg_seq_len            (cfg_compute_cycles),
         .ap_done                (ap_done),
         .ap_idle                (ap_idle),
-        .current_state_dbg      (),
+        .current_state_dbg      (dbg_ctrl_state),
         .ctrl_weight_dma_req    (ctrl_weight_dma_req), // [NEW]
         .i_weight_valid (i_weight_valid), // 连接到 Controller
+        .i_weight_dma_beat      (i_weight_dma_beat),
         .i_input_valid          (i_input_valid),    // [Connect if available]
         .ctrl_weight_load_en    (ctrl_weight_load_en),
         .ctrl_input_stream_en   (ctrl_input_stream_en),
-        .ctrl_drain_en          (ctrl_drain_en_unused)
+        .ctrl_drain_en          (ctrl_drain_en_unused),
+        .dbg_cnt_load           (dbg_cnt_load),
+        .dbg_cnt_seq            (dbg_cnt_seq),
+        .dbg_cnt_drain          (dbg_cnt_drain),
+        .dbg_weight_beat_cnt    (dbg_weight_beat_cnt),
+        .i_dbg_clr              (i_dbg_clr)
     );
 
     // =========================================================================
     // [CRITICAL FIX] 2. Weight Loading Pipeline Alignment
     // =========================================================================
+    // 目的: 对权重数据/valid/load_en 统一打一拍，消除相位差
     // 问题根源: row_load_en 是寄存器输出，比 input data 晚一拍。
     // 解决方案: 在 Core 入口对 数据、Valid、Enable 全部打一拍，实现时序对齐。
     
@@ -91,27 +119,34 @@ module deit_core #(
     // =========================================================================
     // 3. Input Row Load Logic (Using Delayed Signals)
     // =========================================================================
+    // row_load_en 采用 one-hot 左移，按行依次加载权重
     reg [`ARRAY_ROW-1:0] row_load_en;
+    reg [4:0] row_load_cnt;
     
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) row_load_en <= 0;
-        else begin
-            // [FIX] 使用延迟后的总开关 (_d)，确保最后一行加载时不被提前复位
+        if (!rst_n) begin
+            row_load_en  <= 0;
+            row_load_cnt <= 0;
+        end else begin
             if (ctrl_weight_load_en) begin
-                // [FIX] 使用延迟后的 Valid (_d)，与延迟后的数据对齐
-                if (i_weight_valid) begin
+                if (i_weight_valid && (row_load_cnt < `ARRAY_ROW)) begin
+                    row_load_cnt <= row_load_cnt + 1;
                     if (row_load_en == 0) row_load_en <= 1;
                     else row_load_en <= (row_load_en << 1);
+                end else if (row_load_cnt >= `ARRAY_ROW) begin
+                    row_load_en <= 0;
                 end
-                // Hold logic implicit
+                // Hold row_load_en when i_weight_valid is low
             end else begin
-                row_load_en <= 0;
+                row_load_en  <= 0;
+                row_load_cnt <= 0;
             end
         end
     end
     // =========================================================================
     // 3. Input Skew
     // =========================================================================
+    // 行内延迟链：第 r 行延迟 r 拍，形成对角线数据流
     wire [`ARRAY_ROW*`DATA_WIDTH-1:0] skewed_in_act_vec;
     genvar r;
     generate
@@ -152,6 +187,7 @@ module deit_core #(
     // =========================================================================
     // 5. Output Deskew
     // =========================================================================
+    // 列内延迟链：补偿阵列内部时延差，保证列对齐输出
     wire [`ARRAY_COL*`ACC_WIDTH-1:0] aligned_out_vec;
     genvar c;
     generate
@@ -181,6 +217,7 @@ module deit_core #(
     // =========================================================================
     // 6. Latency Compensation (Valid Line - FIXED)
     // =========================================================================
+    // 将输入 valid 延迟 LATENCY_CFG 拍，作为累加写使能
     reg [LATENCY_CFG-1:0] valid_delay_line;
     
     always @(posedge clk or negedge rst_n) begin
@@ -201,7 +238,7 @@ module deit_core #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             acc_cnt <= 0;
-        end else if (!ctrl_input_stream_en) begin
+        end else if (!ctrl_input_stream_en && !acc_wr_en_raw) begin
             acc_cnt <= 0;
         end else if (acc_wr_en_raw && acc_cnt < cfg_compute_cycles) begin
             acc_cnt <= acc_cnt + 1;

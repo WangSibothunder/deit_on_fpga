@@ -1,8 +1,23 @@
 // -----------------------------------------------------------------------------
-// ļ: src/rtl/input_buffer_ctrl.v
-// ޸: Phase 5 Final Fix - Pipeline Alignment & Zero Init (Input Buffer)
+// 文件: src/rtl/input_buffer_ctrl.v
+// 说明: 输入缓冲（64b->96b Gearbox + Ping-Pong）
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// 规格书索引
+// 模块: input_buffer_ctrl
+// 规格书: docs/input_buffer_ctrl.md
+// 用途: 输入缓冲与 64b->96b Gearbox，提供 Ping-Pong 预加载并与 Core 时序对齐
+// 关键参数: DEPTH_LOG2=8(每个 Bank 256 行); DATA_WIDTH=64
+// 接口分组:
+//   - AXI-Stream Slave: s_axis_*
+//   - Core: i_rd_en, o_array_vec, o_dat_valid
+//   - Control: i_bank_swap
+//   - Debug: dbg_ibuf_wr_ptr
+// 时序要点:
+//   - 3x64b -> 2x96b Gearbox；RAM 读延迟 1 拍
+//   - o_dat_valid = i_rd_en 延迟 1 拍
+// -----------------------------------------------------------------------------
 `timescale 1ns / 1ps
 `include "params.vh"
 
@@ -27,7 +42,10 @@ module input_buffer_ctrl #(
     output reg                    o_dat_valid,
 
     // Control
-    input  wire                   i_bank_swap
+    input  wire                   i_bank_swap,
+
+    // --- Debug ---
+    output wire [7:0]             dbg_ibuf_wr_ptr
 );
 
     // -------------------------------------------------------------------------
@@ -43,6 +61,10 @@ module input_buffer_ctrl #(
     // -------------------------------------------------------------------------
     // 2. Gearbox Logic (64-bit -> 96-bit)
     // -------------------------------------------------------------------------
+    // 3 个 64b 输入产生 2 个 96b 输出:
+    //   - State0: 仅缓存 64b
+    //   - State1: 产生第 1 个 96b (当前低 32b + 上次 64b)
+    //   - State2: 产生第 2 个 96b (当前 64b + 上次高 32b)
     reg [1:0]  gb_state; 
     reg [95:0] ram_wdata;
     reg        ram_wen;
@@ -142,6 +164,7 @@ module input_buffer_ctrl #(
     // If Valid is High, we are consuming current data, so look ahead to next address
     // to ensure ram_out_reg is ready for the NEXT cycle.
     wire [DEPTH_LOG2-1:0] rd_ptr_lookahead = (o_dat_valid) ? (rd_ptr + 1) : rd_ptr;
+    // Read Port: 读取对侧 bank
     wire [DEPTH_LOG2:0] final_rd_addr = {~bank_sel, rd_ptr_lookahead}; 
     
     reg [95:0] ram_out_reg;
@@ -151,11 +174,13 @@ module input_buffer_ctrl #(
 
     assign o_array_vec = (o_dat_valid)? ram_out_reg : 0;
 
+    // Debug tap
+    assign dbg_ibuf_wr_ptr = wr_ptr;
+
     // -------------------------------------------------------------------------
-    // 5. Valid Signal Logic (2 Cycle Latency)
+    // 5. Valid 信号逻辑 (1 拍延迟)
     // -------------------------------------------------------------------------
-    // Input Buffer Gearbox adds latency? 
-    // Even if pre-loaded, using a consistent handshake ensures alignment.
+    // 统一用 i_rd_en 触发 valid 延迟，保证与 RAM 读出对齐
     reg valid_sr;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

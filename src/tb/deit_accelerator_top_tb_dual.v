@@ -116,12 +116,15 @@ module deit_accelerator_top_tb_dual;
         input integer k_idx;
         input [127:0] tag;
         begin
-            $display("[CKPT-A][%s] n=%0d k=%0d state=%0d cnt_load=%0d cnt_seq=%0d cnt_drain=%0d acc_cnt=%0d wv=%b iv=%b dma_req=%b",
+            $display("[CKPT-A][%s] n=%0d k=%0d state=%0d cnt_load=%0d cnt_seq=%0d cnt_drain=%0d beat=%0d wload=%0d settle=%0d acc_cnt=%0d wv=%b iv=%b dma_req=%b",
                      tag, n_idx, k_idx,
                      dut.u_core.u_controller.state,
                      dut.u_core.u_controller.cnt_load,
                      dut.u_core.u_controller.cnt_seq,
                      dut.u_core.u_controller.cnt_drain,
+                     dut.u_core.u_controller.weight_beat_cnt,
+                     dut.u_core.u_controller.cnt_wload,
+                     dut.u_core.u_controller.cnt_settle,
                      dut.u_core.acc_cnt,
                      dut.wbuf_valid_out,
                      dut.ibuf_valid_out,
@@ -267,6 +270,11 @@ module deit_accelerator_top_tb_dual;
                         if (axis_out_tvalid && axis_out_tready) begin
                             sampled = axis_out_tdata;
                             expected = file_axis_golden[base + i];
+                            if (axis_out_tlast !== (i == OUTPUT_WORDS_PER_TILE - 1)) begin
+                                $display("[FAIL] TLAST n=%0d word=%0d exp=%b got=%b",
+                                         n_idx, i, (i == OUTPUT_WORDS_PER_TILE - 1), axis_out_tlast);
+                                err_cnt = err_cnt + 1;
+                            end
                             if (sampled !== expected) begin
                                 $display("[FAIL] OUT n=%0d word=%0d exp=%h got=%h", n_idx, i, expected, sampled);
                                 err_cnt = err_cnt + 1;
@@ -395,7 +403,7 @@ module deit_accelerator_top_tb_dual;
             axis_in_tvalid = 0; axis_in_tlast = 0; axis_out_tready = 0;
 
             // Config Global & PPU
-            axi_lite_write(6'h08, M_PAD - 1);   // cfg_seq_len = M_PAD - 1 (align with core)
+            axi_lite_write(6'h08, M_PAD);       // cfg_seq_len = M_PAD
             axi_lite_write(6'h14, file_config[0]);
             axi_lite_write(6'h18, file_config[1]);
             axi_lite_write(6'h1C, file_config[2]);

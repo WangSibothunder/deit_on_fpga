@@ -1,5 +1,21 @@
 // -----------------------------------------------------------------------------
-// 版本: 3.3 (Fix: Added Input Stream Handshake for Gearbox Latency)
+// 文件: src/rtl/global_controller.v
+// 说明: 全局控制 FSM（加载/计算/排空）
+// -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// 规格书索引
+// 模块: global_controller
+// 规格书: docs/global_controller.md
+// 用途: 全局控制 FSM，协调权重加载、输入流与排空阶段
+// 关键参数: LATENCY(排空周期)
+// 接口分组:
+//   - Control In: ap_start, cfg_seq_len
+//   - Buffer Handshake: i_weight_valid, i_weight_dma_beat, i_input_valid
+//   - Control Out: ctrl_weight_dma_req, ctrl_weight_load_en, ctrl_input_stream_en, ctrl_drain_en
+//   - Status/Debug: ap_done/ap_idle/计数器
+// 时序要点:
+//   - S_LOAD_W 分两段：DMA 填充 + Array 加载
+//   - S_COMPUTE 仅在 i_input_valid 时推进序列计数
 // -----------------------------------------------------------------------------
 `timescale 1ns / 1ps
 
@@ -21,6 +37,8 @@ module global_controller #(
     
     // Handshake Input: Buffer tells Controller when WEIGHT data is ready
     input  wire         i_weight_valid,       
+    // Handshake Input: DMA beat received (weight stream)
+    input  wire         i_weight_dma_beat,
 
     output reg          ctrl_weight_load_en,  // Phase 2: Buffer -> Array
     
@@ -29,7 +47,14 @@ module global_controller #(
     input  wire         i_input_valid,        // [ADD] 新增端口
 
     output reg          ctrl_input_stream_en, 
-    output reg          ctrl_drain_en
+    output reg          ctrl_drain_en,
+
+    // Debug counters
+    output wire [31:0]  dbg_cnt_load,
+    output wire [31:0]  dbg_cnt_seq,
+    output wire [31:0]  dbg_cnt_drain,
+    output wire [31:0]  dbg_weight_beat_cnt,
+    input  wire         i_dbg_clr
 );
 
     localparam S_IDLE     = 3'd0;
@@ -42,11 +67,17 @@ module global_controller #(
     reg [31:0] cnt_load;
     reg [31:0] cnt_seq;
     reg [31:0] cnt_drain;
+    reg [31:0] weight_beat_cnt;
+    reg [31:0] cnt_wload;
+    reg [31:0] cnt_settle;
 
-    // Phase 1 (27cyc) + Phase 2 (12cyc) = 39 cycles total
-    // 注意：请确保这里的 CNT_PHASE1_END 足够覆盖你的 DMA 写入延迟
-    localparam CNT_PHASE1_END = 27; 
-    localparam CNT_LOAD_TOTAL = 39; 
+    localparam integer WEIGHT_BEATS = 24;
+    localparam integer WEIGHT_ROWS  = 12;
+    localparam integer DMA_SETTLE_CYC = 2;
+
+    // 说明:
+    //   - WEIGHT_BEATS: DMA 传输的 64b beat 数 (对应 12 行权重)
+    //   - WEIGHT_ROWS : 实际加载到阵列的行数
 
     // State Register
     always @(posedge clk or negedge rst_n) begin
@@ -60,7 +91,7 @@ module global_controller #(
         case (state)
             S_IDLE:    if (ap_start) next_state = S_LOAD_W;
             
-            S_LOAD_W:  if (cnt_load >= CNT_LOAD_TOTAL - 1) next_state = S_COMPUTE;
+            S_LOAD_W:  if (cnt_wload >= WEIGHT_ROWS) next_state = S_COMPUTE;
             
             // [MOD] S_COMPUTE Transition
             // 只有当 cnt_seq (有效计算计数) 达到目标长度时才跳转
@@ -81,7 +112,16 @@ module global_controller #(
             ctrl_drain_en        <= 0;
             ap_done <= 0; ap_idle <= 1;
             cnt_load <= 0; cnt_seq <= 0; cnt_drain <= 0;
+            weight_beat_cnt <= 0; cnt_wload <= 0; cnt_settle <= 0;
         end else begin
+            if (i_dbg_clr) begin
+                cnt_load <= 0;
+                cnt_seq <= 0;
+                cnt_drain <= 0;
+                weight_beat_cnt <= 0;
+                cnt_wload <= 0;
+                cnt_settle <= 0;
+            end
             // Defaults
             ctrl_weight_dma_req  <= 0;
             ctrl_weight_load_en  <= 0;
@@ -93,20 +133,26 @@ module global_controller #(
                 S_IDLE: begin
                     ap_idle <= 1;
                     cnt_load <= 0; cnt_seq <= 0; cnt_drain <= 0;
+                    weight_beat_cnt <= 0; cnt_wload <= 0; cnt_settle <= 0;
                 end
                 
                 S_LOAD_W: begin
-                    if (cnt_load < CNT_PHASE1_END) begin
-                        // Phase 1: Fill Buffer (DMA)
+                    if (weight_beat_cnt < WEIGHT_BEATS) begin
+                        // Phase 1: Fill Buffer (DMA), count actual beats
                         ctrl_weight_dma_req <= 1;
-                        cnt_load <= cnt_load + 1;
+                        if (i_weight_dma_beat) begin
+                            weight_beat_cnt <= weight_beat_cnt + 1;
+                            cnt_load <= cnt_load + 1;
+                        end
+                    end else if (cnt_settle < DMA_SETTLE_CYC) begin
+                        cnt_settle <= cnt_settle + 1;
+                        cnt_load   <= cnt_load + 1;
                     end else begin
                         // Phase 2: Load Array (Buffer -> Array)
                         ctrl_weight_load_en <= 1;
-                        
-                        // Handshake Mechanism (Weight):
-                        if (i_weight_valid) begin
-                            cnt_load <= cnt_load + 1;
+                        if (i_weight_valid && cnt_wload < WEIGHT_ROWS) begin
+                            cnt_wload <= cnt_wload + 1;
+                            cnt_load  <= cnt_load + 1;
                         end
                     end
                 end
@@ -136,5 +182,9 @@ module global_controller #(
     end
     
     assign current_state_dbg = state;
+    assign dbg_cnt_load = cnt_load;
+    assign dbg_cnt_seq = cnt_seq;
+    assign dbg_cnt_drain = cnt_drain;
+    assign dbg_weight_beat_cnt = weight_beat_cnt;
 
 endmodule

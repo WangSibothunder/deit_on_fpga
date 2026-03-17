@@ -1,14 +1,23 @@
 // -----------------------------------------------------------------------------
-// 文件名: pe.v
-// 描述: Weight Stationary 处理单元
-// 功能: 
-//    1. Load Mode: 锁存权重 (reg_weight <= in_weight)
-//    2. Compute Mode: out_psum = in_psum + (in_act * reg_weight)
-//    3. Data Pass: 将输入 Activation 向右传递 (out_act <= in_act)
+// 文件: src/rtl/pe.v
+// 说明: 处理单元 PE（权重驻留 + MAC）
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// 规格书索引
+// 模块: pe
+// 规格书: docs/pe.md
+// 用途: 单个 PE，支持权重驻留、MAC 计算与激活右传
+// 接口分组:
+//   - Control: en_compute / load_weight
+//   - Data: in_act/in_weight/in_psum -> out_act/out_psum
+// 时序要点:
+//   - load_weight 更新寄存器，计算结果在下一拍生效
+//   - en_compute 时，out_act/out_psum 产生 1 拍延迟
+// -----------------------------------------------------------------------------
 `include "params.vh"
 
+(* use_dsp = "yes" *)
 module pe (
     input  wire                     clk,
     input  wire                     rst_n,
@@ -30,6 +39,8 @@ module pe (
 
     // 内部权重寄存器
     reg signed [`DATA_WIDTH-1:0] reg_weight;
+    (* use_dsp = "yes" *) wire signed [`ACC_WIDTH-1:0] mac_expr;
+    assign mac_expr = $signed(in_psum) + ($signed(in_act) * reg_weight);
 
     // -------------------------------------------------------------------------
     // 核心逻辑
@@ -41,6 +52,8 @@ module pe (
             out_psum   <= 0;
         end else begin
             // 1. 权重加载逻辑 (优先级高，或互斥)
+            // 若 load_weight 与 en_compute 同拍为 1，
+            // 本拍计算仍使用旧权重（新权重在此拍写入，下拍生效）
             if (load_weight) begin
                 reg_weight <= $signed(in_weight);
                 // 在加载权重时，通常为了形成移位链，out_act 也可以用来传递权重
@@ -56,7 +69,7 @@ module pe (
                 // MAC Operation: 乘加运算
                 // 关键点: 必须使用 $signed 确保综合为有符号乘法
                 // Zynq DSP48E1 支持 (A*B+C) 的单周期完成
-                out_psum <= $signed(in_psum) + ($signed(in_act) * reg_weight);
+                out_psum <= mac_expr;
             end
         end
     end

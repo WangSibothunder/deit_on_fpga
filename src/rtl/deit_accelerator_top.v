@@ -1,13 +1,21 @@
 // -----------------------------------------------------------------------------
-// 文件名: src/rtl/deit_accelerator_top.v
-// 版本: Phase 5 Final (Integrated Output Buffer & All Fixes)
-// 描述: DeiT 加速器顶层模块
-//       - 包含 Input/Weight Buffer 的握手连接
-//       - 包含 DMA 下降沿触发的 Bank Swap
-//       - 包含 Output Buffer (FIFO) 以平滑输出流
-//       - LATENCY_CFG 修正为 27
+// 文件: src/rtl/deit_accelerator_top.v
+// 说明: 顶层封装，连接 AXI-Lite/AXI-Stream 与内部模块
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// 规格书索引
+// 模块: deit_accelerator_top
+// 规格书: docs/deit_accelerator_top.md
+// 用途: 顶层封装，连接 AXI-Lite/AXI-Stream 与 Core/Buffer/PPU
+// 接口分组:
+//   - AXI-Lite: 控制与配置
+//   - AXI-Stream In: 输入/权重复用通道
+//   - AXI-Stream Out: 量化输出
+// 时序要点:
+//   - AXI-Stream In 通过 core_weight_dma_req 分流
+//   - Bank Swap: Input 在 ap_start 上升沿，Weight 在 DMA 请求下降沿
+// -----------------------------------------------------------------------------
 `timescale 1ns / 1ps
 `include "params.vh"
 
@@ -64,6 +72,7 @@ module deit_accelerator_top #(
     wire        core_weight_load_en;  // Phase 2: Array Load
     wire        core_weight_dma_req;  // Phase 1: DMA Request
     wire        core_input_read_en;
+    wire        core_weight_dma_beat;
     
     // Data Paths
     wire [`ARRAY_ROW*8-1:0]  ibuf_to_core_data; 
@@ -75,6 +84,27 @@ module deit_accelerator_top #(
     // Handshake Signals
     wire                     wbuf_valid_out; // Weight Buffer Valid
     wire                     ibuf_valid_out; // Input Buffer Valid
+
+    // Debug signals
+    wire [7:0]               dbg_ibuf_wr_ptr;
+    wire [3:0]               dbg_wbuf_wr_ptr;
+    wire                     dbg_wbuf_ram_wen;
+    wire                     dbg_wbuf_gb_cnt;
+    wire [7:0]               dbg_obuf_wr_ptr;
+    wire [7:0]               dbg_obuf_rd_ptr;
+    wire                     dbg_obuf_full;
+    wire [2:0]               dbg_ctrl_state;
+    wire [31:0]              dbg_cnt_load;
+    wire [31:0]              dbg_cnt_seq;
+    wire [31:0]              dbg_cnt_drain;
+    wire [31:0]              dbg_weight_beat_cnt;
+    wire [7:0]               dbg_acc_addr;
+    wire [31:0]              dbg_reg0;
+    wire [31:0]              dbg_reg1;
+    wire [31:0]              dbg_reg2;
+    wire [31:0]              dbg_reg3;
+    wire                     dbg_snap;
+    wire                     dbg_clr;
 
     // Reset
     wire sys_rst_n;
@@ -95,13 +125,22 @@ module deit_accelerator_top #(
         .o_cfg_compute_cycles(cfg_seq_len), .o_cfg_acc_mode(cfg_acc_mode),
         .i_ap_done(core_ap_done), .i_ap_idle(core_ap_idle),
         .o_ppu_mult(cfg_ppu_mult), .o_ppu_shift(cfg_ppu_shift),
-        .o_ppu_zp(cfg_ppu_zp), .o_ppu_bias(cfg_ppu_bias), .o_output_en(cfg_output_en)
+        .o_ppu_zp(cfg_ppu_zp), .o_ppu_bias(cfg_ppu_bias), .o_output_en(cfg_output_en),
+        .i_dbg0(dbg_reg0),
+        .i_dbg1(dbg_reg1),
+        .i_dbg2(dbg_reg2),
+        .i_dbg3(dbg_reg3),
+        .o_dbg_snap(dbg_snap),
+        .o_dbg_clr(dbg_clr)
     );
 
     // --- Demux Logic ---
+    // 单 AXI-Stream 输入通道复用：DMA 请求时走权重，否则走输入
     wire wbuf_in_valid = axis_in_tvalid & core_weight_dma_req;
     wire ibuf_in_valid = axis_in_tvalid & (!core_weight_dma_req);
+    assign core_weight_dma_beat = axis_in_tvalid & core_weight_dma_req;
     
+    // 当前实现不对 AXI-Stream In 施加背压
     assign axis_in_tready = 1'b1;
 
     // --- Swap Control Signals (Fixed with Reset) ---
@@ -134,7 +173,8 @@ module deit_accelerator_top #(
         .i_rd_en        (core_input_read_en), 
         .o_array_vec    (ibuf_to_core_data),
         .o_dat_valid    (ibuf_valid_out),    // [Connected]
-        .i_bank_swap    (start_rising_edge) 
+        .i_bank_swap    (start_rising_edge),
+        .dbg_ibuf_wr_ptr(dbg_ibuf_wr_ptr)
     );
 
     weight_buffer_ctrl u_weight_buf (
@@ -145,7 +185,10 @@ module deit_accelerator_top #(
         .i_weight_load_en(core_weight_load_en), 
         .o_weight_vec   (wbuf_to_core_data),
         .o_dat_valid    (wbuf_valid_out),    // [Connected]
-        .i_bank_swap    (weight_dma_done_pulse)
+        .i_bank_swap    (weight_dma_done_pulse),
+        .dbg_wbuf_wr_ptr(dbg_wbuf_wr_ptr),
+        .dbg_wbuf_ram_wen(dbg_wbuf_ram_wen),
+        .dbg_wbuf_gb_cnt(dbg_wbuf_gb_cnt)
     );
 
     // --- Core ---
@@ -161,11 +204,18 @@ module deit_accelerator_top #(
         .in_weight_vec          (wbuf_to_core_data),
         .i_input_valid          (ibuf_valid_out), // [Connected]
         .i_weight_valid         (wbuf_valid_out), // [Connected]
+        .i_weight_dma_beat      (core_weight_dma_beat),
+        .i_dbg_clr              (dbg_clr),
         .out_acc_vec            (core_to_ppu_data),
         .ctrl_weight_load_en    (core_weight_load_en),
         .ctrl_weight_dma_req    (core_weight_dma_req), 
         .ctrl_input_stream_en   (core_input_read_en),
-        .dbg_acc_wr_en(), .dbg_acc_addr(), .dbg_aligned_col0(), .dbg_aligned_col15(), .dbg_raw_col0()
+        .dbg_acc_wr_en(), .dbg_acc_addr(dbg_acc_addr), .dbg_aligned_col0(), .dbg_aligned_col15(), .dbg_raw_col0(),
+        .dbg_ctrl_state(dbg_ctrl_state),
+        .dbg_cnt_load(dbg_cnt_load),
+        .dbg_cnt_seq(dbg_cnt_seq),
+        .dbg_cnt_drain(dbg_cnt_drain),
+        .dbg_weight_beat_cnt(dbg_weight_beat_cnt)
     );
 
     // --- PPU ---
@@ -188,15 +238,48 @@ module deit_accelerator_top #(
     ) u_out_buf (
         .clk            (clk),
         .rst_n          (sys_rst_n),
+        .i_cfg_seq_len  (cfg_seq_len),
         // From PPU
         .i_data         (ppu_to_obuf_data),
         .i_valid        (ppu_valid),
-        .o_full         (), // Optional debug
+        .o_full         (dbg_obuf_full),
         // To AXI-Stream
         .axis_tdata     (axis_out_tdata),
         .axis_tvalid    (axis_out_tvalid),
         .axis_tready    (axis_out_tready),
-        .axis_tlast     (axis_out_tlast)
+        .axis_tlast     (axis_out_tlast),
+        .dbg_obuf_wr_ptr(dbg_obuf_wr_ptr),
+        .dbg_obuf_rd_ptr(dbg_obuf_rd_ptr),
+        .dbg_obuf_full  (dbg_obuf_full)
     );
+
+    // ---------------------------------------------------------------------
+    // Debug register packing
+    // ---------------------------------------------------------------------
+    assign dbg_reg0 = {
+        8'h00,                    // [31:24]
+        dbg_acc_addr,             // [23:16]
+        4'h0,                     // [15:12]
+        dbg_obuf_full,            // [11]
+        axis_out_tlast,           // [10]
+        axis_out_tvalid,          // [9]
+        axis_in_tvalid,           // [8]
+        ibuf_valid_out,           // [7]
+        wbuf_valid_out,           // [6]
+        core_input_read_en,       // [5]
+        core_weight_load_en,      // [4]
+        core_weight_dma_req,      // [3]
+        dbg_ctrl_state            // [2:0]
+    };
+
+    assign dbg_reg1 = {dbg_cnt_seq[15:0], dbg_cnt_load[15:0]};
+    assign dbg_reg2 = {dbg_weight_beat_cnt[15:0], dbg_cnt_drain[15:0]};
+    assign dbg_reg3 = {
+        4'h0,                     // [31:28]
+        dbg_obuf_rd_ptr,          // [27:20]
+        dbg_obuf_wr_ptr,          // [19:12]
+        dbg_wbuf_wr_ptr,          // [11:8]
+        dbg_ibuf_wr_ptr           // [7:0]
+    };
 
 endmodule

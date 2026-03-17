@@ -1,11 +1,22 @@
 // -----------------------------------------------------------------------------
-// ļ: src/rtl/axi_lite_control.v
-// 汾: 1.2 (Fix reg/assign conflict)
-// : AXI4-Lite Slave ƽӿ
-//       - ޸ o_soft_rst_n Ͷ
-//       -  PPU Ĵ
+// 文件: src/rtl/axi_lite_control.v
+// 说明: AXI4-Lite 从接口寄存器映射与配置控制
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// 规格书索引
+// 模块: axi_lite_control
+// 规格书: docs/axi_lite_control.md
+// 用途: AXI4-Lite 从接口，提供寄存器映射与配置/调试访问
+// 关键参数: C_S_AXI_DATA_WIDTH=32, C_S_AXI_ADDR_WIDTH=6
+// 接口分组:
+//   - AXI4-Lite Slave: s_axi_*
+//   - Core Control: o_ap_start/o_soft_rst_n/o_cfg_compute_cycles/o_cfg_acc_mode
+//   - PPU Config: o_ppu_*
+//   - Debug: i_dbg*, o_dbg_snap/o_dbg_clr
+// 时序要点:
+//   - 写通道采用 AW+W 同拍握手；读通道 AR 后单拍返回
+// -----------------------------------------------------------------------------
 `timescale 1ns / 1ps
 
 module axi_lite_control #(
@@ -48,7 +59,16 @@ module axi_lite_control #(
     output wire [4:0]                           o_ppu_shift,
     output wire [7:0]                           o_ppu_zp,
     output wire [31:0]                          o_ppu_bias,   // [FIX] ֮ǰ placeholderڽ߼
-    output wire                                 o_output_en   // [NEW]  PPU Ƿ
+    output wire                                 o_output_en,  // [NEW]  PPU
+
+    // --- Debug Interface ---
+    input  wire [31:0]                          i_dbg0,
+    input  wire [31:0]                          i_dbg1,
+    input  wire [31:0]                          i_dbg2,
+    input  wire [31:0]                          i_dbg3,
+    output reg                                  o_dbg_snap,
+    output reg                                  o_dbg_clr
+
 );
 
     // -------------------------------------------------------------------------
@@ -64,9 +84,16 @@ module axi_lite_control #(
     localparam ADDR_PPU_MULT    = 5'h14; 
     localparam ADDR_PPU_SHIFT   = 5'h18; 
     localparam ADDR_PPU_ZP      = 5'h1C; 
-    // [NEW] Ĵַ
+    // [NEW] Bias 与 Output Enable 地址
     localparam ADDR_PPU_BIAS    = 6'h20; // 32-bit Bias
     localparam ADDR_OUTPUT_EN   = 6'h24; // 1-bit Enable
+
+    localparam ADDR_DBG_SNAP    = 6'h28; // W1C snapshot
+    localparam ADDR_DBG_CLR     = 6'h2C; // W1C clear counters
+    localparam ADDR_DBG0        = 6'h30;
+    localparam ADDR_DBG1        = 6'h34;
+    localparam ADDR_DBG2        = 6'h38;
+    localparam ADDR_DBG3        = 6'h3C;
     localparam VERSION_ID       = 32'h20260117;
 
     // -------------------------------------------------------------------------
@@ -83,6 +110,11 @@ module axi_lite_control #(
     reg [31:0] reg_ppu_bias;  // [NEW]
     reg [31:0] reg_output_en; // [NEW]
 
+    reg [31:0] reg_dbg0;
+    reg [31:0] reg_dbg1;
+    reg [31:0] reg_dbg2;
+    reg [31:0] reg_dbg3;
+
     // -------------------------------------------------------------------------
     // AXI Write Channel
     // -------------------------------------------------------------------------
@@ -94,10 +126,14 @@ module axi_lite_control #(
             o_ap_start <= 0;
             reg_ppu_bias <= 0;
             reg_output_en <= 0;
-        end else begin
-            // Default: Clear Pulse
+
+            reg_dbg0 <= 0; reg_dbg1 <= 0; reg_dbg2 <= 0; reg_dbg3 <= 0;
+            o_dbg_snap <= 0; o_dbg_clr <= 0;        end else begin
+            // Default: 清除脉冲型寄存器 (o_ap_start / o_dbg_*)
             if (o_ap_start) o_ap_start <= 0;
 
+            if (o_dbg_snap) o_dbg_snap <= 0;
+            if (o_dbg_clr) o_dbg_clr <= 0;
             s_axi_awready <= 0; s_axi_wready <= 0;
             
             // Handshake Logic: Wait for both AWVALID and WVALID
@@ -112,7 +148,7 @@ module axi_lite_control #(
                         end
                     end
                     4'h1: begin // 0x04 STATUS (W1C for Bit 0)
-                        if (s_axi_wstrb[0] && s_axi_wdata[0]) reg_status[0] <= 0;
+                        // Clear handled in Status Register Logic to avoid multi-driven reg_status[0]
                     end
                     4'h2: if (s_axi_wstrb[0]) reg_cfg_k <= s_axi_wdata;
                     4'h3: if (s_axi_wstrb[0]) reg_cfg_acc <= s_axi_wdata;
@@ -121,9 +157,23 @@ module axi_lite_control #(
                     4'h5: if (s_axi_wstrb[0]) reg_ppu_mult <= s_axi_wdata;
                     4'h6: if (s_axi_wstrb[0]) reg_ppu_shift <= s_axi_wdata;
                     4'h7: if (s_axi_wstrb[0]) reg_ppu_zp <= s_axi_wdata;
-                    // [NEW] Bias & Output Enable
+    // [NEW] Bias 与 Output Enable 地址
                     4'h8: if (s_axi_wstrb[0]) reg_ppu_bias <= s_axi_wdata;  // 0x20
                     4'h9: if (s_axi_wstrb[0]) reg_output_en <= s_axi_wdata; // 0x24
+                    4'hA: begin // 0x28 DBG_SNAP
+                        if (s_axi_wstrb[0] && s_axi_wdata[0]) begin
+                            o_dbg_snap <= 1;
+                            reg_dbg0 <= i_dbg0;
+                            reg_dbg1 <= i_dbg1;
+                            reg_dbg2 <= i_dbg2;
+                            reg_dbg3 <= i_dbg3;
+                        end
+                    end
+                    4'hB: begin // 0x2C DBG_CLR
+                        if (s_axi_wstrb[0] && s_axi_wdata[0]) begin
+                            o_dbg_clr <= 1;
+                        end
+                    end
                 endcase
             end
 
@@ -170,6 +220,12 @@ module axi_lite_control #(
                     4'h7: s_axi_rdata <= reg_ppu_zp;
                     4'h8: s_axi_rdata <= reg_ppu_bias; // [NEW]
                     4'h9: s_axi_rdata <= reg_output_en; // [NEW]
+                    4'hA: s_axi_rdata <= 32'h0; // DBG_SNAP
+                    4'hB: s_axi_rdata <= 32'h0; // DBG_CLR
+                    4'hC: s_axi_rdata <= reg_dbg0;
+                    4'hD: s_axi_rdata <= reg_dbg1;
+                    4'hE: s_axi_rdata <= reg_dbg2;
+                    4'hF: s_axi_rdata <= reg_dbg3;
                     default: s_axi_rdata <= 0;
                 endcase
             end else begin
@@ -193,7 +249,7 @@ module axi_lite_control #(
     assign o_ppu_mult  = reg_ppu_mult[15:0];
     assign o_ppu_shift = reg_ppu_shift[4:0];
     assign o_ppu_zp    = reg_ppu_zp[7:0];
-    // [FIX] ź
+    // [FIX] Bias 输出连接
     assign o_ppu_bias  = reg_ppu_bias;
     assign o_output_en = reg_output_en[0];
 

@@ -5,12 +5,7 @@ set MODULE=deit_accelerator_top
 set TB_MODULE=%MODULE%_tb
 set SIM_OUT=src\sim\%MODULE%_sim.out
 set VCD_FILE=src/sim/top_verify.vcd
-
-REM Init conda env
-call G:\anaconda\Scripts\conda.exe activate pytorch
-if errorlevel 1 (
-  echo [WARN] Conda activate failed, continuing with system python.
-)
+REM Conda disabled here for stability; use system python
 
 REM 1. Compile
 echo [1/3] Compiling RTL ^& Testbench...
